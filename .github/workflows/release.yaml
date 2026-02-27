@@ -25,11 +25,20 @@ jobs:
             - name: Build executable
               run: pyinstaller --onefile --name hive src/hive/main.py
 
+            - name: Rename executable
+              shell: bash
+              run: |
+                if [ -f dist/hive.exe ]; then
+                  mv dist/hive.exe dist/hive-${{ matrix.os }}.exe
+                else
+                  mv dist/hive dist/hive-${{ matrix.os }}
+                fi
+
             - name: Upload artifact
               uses: actions/upload-artifact@v4
               with:
                 name: hive_${{ github.ref_name }}_${{ matrix.os }}
-                path: dist/hive*
+                path: dist/hive-${{ matrix.os }}*
 
     release:
         needs: build
