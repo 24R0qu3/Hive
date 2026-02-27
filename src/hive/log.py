@@ -34,3 +34,5 @@ def setup(
 
     root.addHandler(console)
     root.addHandler(file)
+
+    return console, file
