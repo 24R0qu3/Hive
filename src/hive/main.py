@@ -26,3 +26,7 @@ def run():
     setup(**kwargs)
 
     logger.info("Hive started")
+
+
+if __name__ == "__main__":
+    run()
