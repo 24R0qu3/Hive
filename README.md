@@ -45,5 +45,23 @@ By default logs are written to the platform-appropriate user directory:
 
 ```bash
 pip install -e ".[test]"   # install with test dependencies
+pip install -e ".[dev]"    # install with dev dependencies (bump-my-version, ruff)
 pytest                     # run tests
+ruff check .               # lint
+ruff format .              # format code
 ```
+
+## Releasing
+
+```bash
+bump-my-version bump patch   # 0.0.0 → 0.0.1
+bump-my-version bump minor   # 0.0.1 → 0.1.0
+bump-my-version bump major   # 0.1.0 → 1.0.0
+git push --follow-tags       # triggers release workflow
+```
+
+## CI / CD
+
+- **test.yaml** — runs ruff and pytest on every push/PR to `main`
+- **release.yaml** — builds executables for Windows, Linux, macOS on version tag push
+- **Dependabot** — opens weekly PRs to update pip and GitHub Actions dependencies
