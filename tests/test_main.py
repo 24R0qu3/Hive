@@ -61,7 +61,7 @@ def make_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument("--log", default="WARNING", choices=LEVELS)
     parser.add_argument("--log-file", default="DEBUG", choices=LEVELS)
-    parser.add_argument("--log-path", default="hive.log")
+    parser.add_argument("--log-path", default=None)
     return parser
 
 
@@ -77,7 +77,7 @@ def test_default_file_level():
 
 def test_default_log_path():
     args = make_parser().parse_args([])
-    assert args.log_path == "hive.log"
+    assert args.log_path is None
 
 
 def test_custom_console_level():

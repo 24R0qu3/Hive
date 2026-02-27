@@ -16,13 +16,13 @@ def run():
     parser.add_argument(
         "--log-file", default="DEBUG", choices=LEVELS, help="File log level"
     )
-    parser.add_argument("--log-path", default="hive.log", help="Path to log file")
+    parser.add_argument("--log-path", default=None, help="Path to log file")
     args = parser.parse_args()
 
-    setup(
-        console_level=args.log,
-        file_level=args.log_file,
-        log_path=args.log_path,
-    )
+    kwargs = {"console_level": args.log, "file_level": args.log_file}
+    if args.log_path:
+        kwargs["log_path"] = args.log_path
+
+    setup(**kwargs)
 
     logger.info("Hive started")
