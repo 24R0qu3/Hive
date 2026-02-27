@@ -1,5 +1,23 @@
+# build artifacts
+dist/
+build/
+
+# Python cache (all locations)
+**/__pycache__/
+*.pyc
+*.pyo
+
+# logs (any location)
+*.log
+
+# pytest
+.pytest_cache/
+
+# editor
+.vscode/
+.idea/
+
+*egg-info/
+
 .claude
 .venv
-hive.egg*
-__pycache__
-hive.log
