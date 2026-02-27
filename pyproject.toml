@@ -9,7 +9,6 @@ requires-python = ">=3.10"
 dependencies = [
     "prompt_toolkit",
     "rich",
-    "logging",
     "platformdirs"
 ]
 
@@ -18,11 +17,29 @@ hive = "hive.main:run"
 
 [project.optional-dependencies]
 build = ["pyinstaller"]
-test = ["pytest"]
+test = ["pytest", "ruff"]
+dev = ["bump-my-version", "ruff"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.dynamic]
 version = {attr = "hive.__version__"}
+
+[tool.bumpversion]
+current_version = "0.0.0"
+commit = true
+tag = true
+tag_name = "v{new_version}"
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[[tool.bumpversion.files]]
+filename = "src/hive/__init__.py"
+search = '__version__ = "{current_version}"'
+replace = '__version__ = "{new_version}"'
 

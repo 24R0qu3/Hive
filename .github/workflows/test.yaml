@@ -20,5 +20,11 @@ jobs:
             - name: Install dependencies
               run: pip install -e ".[test]"
             
+            - name: Lint
+              run: ruff check .
+
+            - name: Format check
+              run: ruff format --check .
+
             - name: Run tests
               run: pytest
