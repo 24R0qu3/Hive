@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools >= 77.0.03"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hive"
+dynamic = ["version"]
+requires-python = ">=3.10"
+dependencies = [
+    "prompt_toolkit",
+    "rich",
+    "logging",
+    "platformdirs"
+]
+
+[project.scripts]
+hive = "hive.main:run"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+version = {attr = "hive.__version__"}
+

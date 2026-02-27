@@ -1,0 +1,5 @@
+.claude
+.venv
+hive.egg*
+__pycache__
+hive.log
