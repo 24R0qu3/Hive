@@ -16,6 +16,9 @@ dependencies = [
 [project.scripts]
 hive = "hive.main:run"
 
+[project.optional-dependencies]
+buidl = ["pyinstaller"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
