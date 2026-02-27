@@ -1,7 +1,7 @@
-import logging
 import argparse
+import logging
+
 import pytest
-from pathlib import Path
 
 from hive.log import setup
 
@@ -16,6 +16,7 @@ def clean_root_logger():
 
 # --- logging setup ---
 
+
 def test_root_logger_set_to_debug(tmp_path):
     setup(log_path=str(tmp_path / "hive.log"))
     assert logging.getLogger().level == logging.DEBUG
@@ -24,8 +25,12 @@ def test_root_logger_set_to_debug(tmp_path):
 def test_console_handler_level(tmp_path):
     setup(console_level="INFO", log_path=str(tmp_path / "hive.log"))
     root = logging.getLogger()
-    console = next(h for h in root.handlers if isinstance(h, logging.StreamHandler)
-                   and not isinstance(h, logging.FileHandler))
+    console = next(
+        h
+        for h in root.handlers
+        if isinstance(h, logging.StreamHandler)
+        and not isinstance(h, logging.FileHandler)
+    )
     assert console.level == logging.INFO
 
 
@@ -55,8 +60,10 @@ def test_two_handlers_attached(tmp_path):
 
 # --- CLI argument parsing ---
 
+
 def make_parser():
     from hive.main import LEVELS
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--log", default="WARNING", choices=LEVELS)
     parser.add_argument("--log-file", default="DEBUG", choices=LEVELS)

@@ -1,7 +1,9 @@
 import logging
 import logging.handlers
 from pathlib import Path
+
 from platformdirs import user_log_dir
+
 
 def setup(
     console_level: str = "WARNING",
@@ -13,9 +15,7 @@ def setup(
     root = logging.getLogger()
     root.setLevel(logging.DEBUG)  # let handlers filter, not the root
 
-    formatter = logging.Formatter(
-        "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-    )
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
     # --- console handler ---
     console = logging.StreamHandler()
