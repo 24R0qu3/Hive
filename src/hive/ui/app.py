@@ -89,7 +89,7 @@ def _build_welcome(
         cwd_str = str(cwd)
         max_cwd_len = inner_width - len(session_tag) - 2
         if len(cwd_str) > max_cwd_len and max_cwd_len > 3:
-            cwd_str = "…" + cwd_str[-(max_cwd_len - 1):]
+            cwd_str = "…" + cwd_str[-(max_cwd_len - 1) :]
         gap = max(1, inner_width - len(cwd_str) - len(session_tag))
         info_line = Text.assemble(
             (cwd_str, "dim"),
@@ -107,7 +107,7 @@ def _build_welcome(
     elif cwd is not None:
         cwd_str = str(cwd)
         if len(cwd_str) > inner_width - 1 and inner_width > 3:
-            cwd_str = "…" + cwd_str[-(inner_width - 2):]
+            cwd_str = "…" + cwd_str[-(inner_width - 2) :]
         hints = Group(
             Text(cwd_str, style="dim"),
             Text(
@@ -171,9 +171,9 @@ def _build_trust_panel(cwd: Path, width: int = 0) -> Panel:
         ),
         Text("history, logs, and output.", justify="center"),
         Text(""),
-        Text("[Y] Trust & continue    [N] Exit",
-              style="bold #FFC107",
-                justify="center"),
+        Text(
+            "[Y] Trust & continue    [N] Exit", style="bold #FFC107", justify="center"
+        ),
         Text(""),
     )
     return Panel(
@@ -493,9 +493,9 @@ class HiveApp:
                 if s.history_path.exists():
                     lines = [
                         ln
-                        for ln in s.history_path.
-                        read_text(encoding="utf-8").
-                        splitlines()
+                        for ln in s.history_path.read_text(
+                            encoding="utf-8"
+                        ).splitlines()
                         if ln.strip()
                     ]
                     cmd_count = len(lines)
