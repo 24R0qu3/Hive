@@ -27,6 +27,9 @@ def run():
 
     logger.info("Hive started")
 
+    from hive.ui.app import HiveApp
+    HiveApp().run()
+
 
 if __name__ == "__main__":
     run()
