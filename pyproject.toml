@@ -37,6 +37,7 @@ line-length = 88
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]
+ignore = ["E501"]
 
 [[tool.bumpversion.files]]
 filename = "src/hive/__init__.py"

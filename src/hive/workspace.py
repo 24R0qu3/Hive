@@ -86,6 +86,37 @@ def list_sessions(cwd: Path) -> "list[Session]":
     return sessions
 
 
+def get_config(cwd: Path) -> dict:
+    """Read .hive/config.json, returning {} if missing."""
+    config_path = _hive_path(cwd) / "config.json"
+    if not config_path.exists():
+        return {}
+    return json.loads(config_path.read_text(encoding="utf-8"))
+
+
+def save_config(cwd: Path, config: dict) -> None:
+    """Write .hive/config.json."""
+    config_path = _hive_path(cwd) / "config.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+
+
+def has_language(cwd: Path) -> bool:
+    """Return True only if a language has been explicitly configured."""
+    return "language" in get_config(cwd)
+
+
+def get_language(cwd: Path) -> "str | None":
+    """Return the configured language code, or None if not set."""
+    return get_config(cwd).get("language")
+
+
+def set_language(cwd: Path, lang: str) -> None:
+    """Persist the language choice to .hive/config.json."""
+    config = get_config(cwd)
+    config["language"] = lang
+    save_config(cwd, config)
+
+
 def save_output(session: Session, lines: list[str]) -> None:
     """Write output lines as JSON-lines to the session output file."""
     session.output_path.write_text(

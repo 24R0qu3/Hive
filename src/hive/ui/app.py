@@ -18,19 +18,23 @@ from rich.table import Table
 from rich.text import Text
 
 from hive import __version__
+from hive.i18n import LANG_OPTIONS, t
 from hive.log import add_session_handler
+from hive.user import get_user_name, has_user_name, set_user_name
 from hive.workspace import (
     Session,
     create_workspace,
+    get_language,
+    has_language,
     list_sessions,
     load_output,
     new_session,
     save_output,
+    set_language,
 )
 
 logger = logging.getLogger(__name__)
 
-# Minimum terminal width to show the honeycomb graphic alongside the logo.
 _WIDE_THRESHOLD = 80
 
 
@@ -55,21 +59,41 @@ def _load_history(path: Path) -> list[str]:
         try:
             entries.append(json.loads(line))
         except json.JSONDecodeError:
-            if line.startswith("+"):  # old FileHistory entry
+            if line.startswith("+"):
                 entries.append(line[1:])
-            # lines starting with '#' are timestamps — skip them
     return entries
 
 
 # ---------------------------------------------------------------------------
-# Panels
+# Panel builders
 # ---------------------------------------------------------------------------
+
+
+def _build_name_panel(is_rename: bool = False) -> Panel:
+    """Name prompt panel — always in English, shown before language selection."""
+    heading = "What's your new name?" if is_rename else "Welcome to Hive!"
+    prompt = "Type your name below and press Enter."
+    content = Group(
+        Text(""),
+        Text(heading, style="bold #FFC107", justify="center"),
+        Text(""),
+        Text(prompt, style="dim", justify="center"),
+        Text(""),
+    )
+    return Panel(
+        content,
+        title=f"[bold #FFC107]v{__version__}[/bold #FFC107]",
+        title_align="left",
+        border_style="#FFC107",
+    )
 
 
 def _build_welcome(
     width: int = 0,
     cwd: Path | None = None,
     session_id: str | None = None,
+    name: str | None = None,
+    lang: str = "en",
 ) -> Panel:
     """Build the welcome panel, showing the honeycomb only on wide terminals."""
     logo = Text.assemble(
@@ -97,11 +121,7 @@ def _build_welcome(
         )
         hints: object = Group(
             info_line,
-            Text(
-                "Enter · Ctrl+J for newline · Ctrl+C · /exit",
-                style="dim",
-                justify="left",
-            ),
+            Text(t("welcome.hint", lang), style="dim", justify="left"),
         )
     elif cwd is not None:
         cwd_str = str(cwd)
@@ -109,18 +129,20 @@ def _build_welcome(
             cwd_str = "…" + cwd_str[-(inner_width - 2) :]
         hints = Group(
             Text(cwd_str, style="dim"),
-            Text(
-                "Enter · Ctrl+J for newline · Ctrl+C · /exit",
-                style="dim",
-                justify="left",
-            ),
+            Text(t("welcome.hint", lang), style="dim", justify="left"),
         )
     else:
-        hints = Text(
-            "Enter · Ctrl+J for newline · Ctrl+C · /exit",
-            style="dim",
-            justify="left",
+        hints = Text(t("welcome.hint", lang), style="dim", justify="left")
+
+    greeting = (
+        Text(
+            t("welcome.greeting", lang).format(name=name),
+            style="bold #FFC107",
+            justify="center",
         )
+        if name
+        else None
+    )
 
     if width >= _WIDE_THRESHOLD:
         right = Text.assemble(
@@ -143,9 +165,11 @@ def _build_welcome(
         grid.add_column(vertical="middle")
         grid.add_column(vertical="middle")
         grid.add_row(logo, right)
-        content = Group(Text(""), grid, Text(""), hints)
+        body = Group(Text(""), grid, Text(""), hints)
+        content = Group(greeting, Text(""), body) if greeting else Group(Text(""), body)
     else:
-        content = Group(Text(""), logo, Text(""), hints)
+        body = Group(Text(""), logo, Text(""), hints)
+        content = Group(greeting, Text(""), body) if greeting else Group(Text(""), body)
 
     return Panel(
         content,
@@ -155,8 +179,10 @@ def _build_welcome(
     )
 
 
-def _build_trust_panel(cwd: Path, width: int = 0, choice: int = 0) -> Panel:
-    """Build the trust prompt panel with arrow-key selectable Yes / No."""
+def _build_trust_panel(
+    cwd: Path, width: int = 0, choice: int = 0, lang: str = "en"
+) -> Panel:
+    """Trust prompt panel with arrow-key selectable Yes / No."""
     yes_style = "bold #FFC107" if choice == 0 else "dim"
     no_style = "bold #FFC107" if choice == 1 else "dim"
 
@@ -171,16 +197,16 @@ def _build_trust_panel(cwd: Path, width: int = 0, choice: int = 0) -> Panel:
 
     content = Group(
         Text(""),
-        Text("Hive wants to create a local workspace in:", justify="center"),
+        Text(t("trust.heading", lang), justify="center"),
         Text(""),
         Text(str(cwd), style="bold", justify="center"),
         Text(""),
-        Text("This will create a .hive folder for session", justify="center"),
-        Text("history, logs, and output.", justify="center"),
+        Text(t("trust.body1", lang), justify="center"),
+        Text(t("trust.body2", lang), justify="center"),
         Text(""),
         options,
         Text(""),
-        Text("← → to choose · Enter to confirm", style="dim", justify="center"),
+        Text(t("trust.hint", lang), style="dim", justify="center"),
         Text(""),
     )
     return Panel(
@@ -191,8 +217,39 @@ def _build_trust_panel(cwd: Path, width: int = 0, choice: int = 0) -> Panel:
     )
 
 
-def _build_resume_panel(sessions: "list[Session]", idx: int, width: int = 0) -> Panel:
-    """Build the inline session picker panel."""
+def _build_language_panel(lang_options: list, idx: int, width: int = 0) -> Panel:
+    """Language picker panel — heading and hints update to match the highlighted language."""
+    current_lang = lang_options[idx][0]
+
+    rows = []
+    for i, (code, label) in enumerate(lang_options):
+        selected = i == idx
+        prefix = "▶ " if selected else "  "
+        style = "bold #FFC107" if selected else ""
+        rows.append(Text(f"{prefix}{label}", style=style, justify="center"))
+
+    content = Group(
+        Text(""),
+        Text(t("lang.heading", current_lang), justify="center"),
+        Text(""),
+        *rows,
+        Text(""),
+        Text(t("lang.hint", current_lang), style="dim", justify="center"),
+        Text(t("lang.change_later", current_lang), style="dim", justify="center"),
+        Text(""),
+    )
+    return Panel(
+        content,
+        title=f"[bold #FFC107]v{__version__}[/bold #FFC107]",
+        title_align="left",
+        border_style="#FFC107",
+    )
+
+
+def _build_resume_panel(
+    sessions: list[Session], idx: int, width: int = 0, lang: str = "en"
+) -> Panel:
+    """Session resume picker panel."""
     rows = []
     for i, s in enumerate(sessions):
         selected = i == idx
@@ -202,15 +259,11 @@ def _build_resume_panel(sessions: "list[Session]", idx: int, width: int = 0) -> 
 
     content = Group(
         Text(""),
-        Text("Choose a session to resume:", justify="center"),
+        Text(t("resume.heading", lang), justify="center"),
         Text(""),
         *rows,
         Text(""),
-        Text(
-            "↑ ↓ to navigate · Enter to resume · Esc to cancel",
-            style="dim",
-            justify="center",
-        ),
+        Text(t("resume.hint", lang), style="dim", justify="center"),
         Text(""),
     )
     return Panel(
@@ -234,9 +287,20 @@ class HiveApp:
         trusted: bool = False,
     ):
         self._cwd = cwd
-        self._awaiting_trust = not trusted and session is None
 
-        # Set up or create session immediately when trust already established
+        # --- global user name ---
+        self._user_name: str | None = get_user_name()
+        self._awaiting_name: bool = not has_user_name()
+        self._name_is_rename: bool = False
+        self._name_panel_width: int = -1
+
+        # Whether the trust dialog is needed (may be deferred until after name entry)
+        self._needs_trust: bool = not trusted and session is None
+        self._awaiting_trust: bool = not self._awaiting_name and self._needs_trust
+        self._trust_choice: int = 0
+        self._trust_panel_key: tuple = (-1, -1)
+
+        # --- session setup ---
         if session is not None:
             self._session: Session | None = session
             add_session_handler(str(session.log_path))
@@ -246,13 +310,33 @@ class HiveApp:
         else:
             self._session = None
 
+        # --- language state ---
+        workspace_exists = trusted or session is not None
+        if workspace_exists:
+            lang_code = get_language(cwd)
+            self._lang: str = lang_code if lang_code else "en"
+            # Show picker if language not yet set and not blocked behind name prompt
+            self._picking_language: bool = (
+                not has_language(cwd) and not self._awaiting_name
+            )
+        else:
+            self._lang = "en"
+            self._picking_language = False
+        self._lang_idx: int = 0
+        self._lang_panel_key: tuple = (-1, -1)
+
+        # --- resume picker state ---
+        self._resuming: bool = False
+        self._resume_sessions: list[Session] = []
+        self._resume_idx: int = 0
+        self._resume_panel_key: tuple = (-1, -1)
+
         # --- output state ---
         self._welcome_lines: list[str] = []
         self._welcome_width: int = -1
         self._output_lines: list[str] = []
         self._scroll_offset: int = 0
 
-        # Restore output if resuming a session
         if session is not None and session.output_path.exists():
             self._output_lines = load_output(session)
 
@@ -265,16 +349,6 @@ class HiveApp:
             self._history = []
         self._history_idx: int = len(self._history)
         self._history_draft: str = ""
-
-        # --- trust dialog state ---
-        self._trust_choice: int = 0  # 0 = Yes, 1 = No
-        self._trust_panel_key: tuple = (-1, -1)  # (width, choice)
-
-        # --- resume picker state ---
-        self._resuming: bool = False
-        self._resume_sessions: list[Session] = []
-        self._resume_idx: int = 0
-        self._resume_panel_key: tuple = (-1, -1)  # (width, idx)
 
         # --- input field ---
         self.input_field = TextArea(
@@ -307,10 +381,49 @@ class HiveApp:
         # --- key bindings ---
         kb = KeyBindings()
 
-        _not_resuming = ~Condition(lambda: self._resuming)
-        _not_modal = ~Condition(lambda: self._awaiting_trust or self._resuming)
+        _name_active = Condition(lambda: self._awaiting_name)
+        _trust_active = Condition(lambda: self._awaiting_trust)
+        _lang_active = Condition(lambda: self._picking_language)
+        _resume_active = Condition(lambda: self._resuming)
 
-        # Submit: guarded against both modal states
+        # Blocks regular submit and history nav
+        _not_modal = ~Condition(
+            lambda: (
+                self._awaiting_name
+                or self._awaiting_trust
+                or self._picking_language
+                or self._resuming
+            )
+        )
+        # Blocks history nav (but not name — user is typing freely there)
+        _not_picker = ~Condition(
+            lambda: self._resuming or self._picking_language or self._awaiting_name
+        )
+
+        # -- Name input: Enter saves name, transitions to next modal --
+        @kb.add("enter", filter=has_focus(self.input_field) & _name_active, eager=True)
+        def name_submit(event):
+            name = self.input_field.text.strip()
+            if not name:
+                return  # name is required
+            set_user_name(name)
+            self._user_name = name
+            self._name_is_rename = False
+            self._awaiting_name = False
+            self.input_field.text = ""
+            self._name_panel_width = -1
+            if self._needs_trust:
+                self._awaiting_trust = True
+            elif not has_language(self._cwd):
+                # Existing workspace without language (or rename mid-session without lang)
+                self._picking_language = True
+                self._lang_idx = 0
+                self._lang_panel_key = (-1, -1)
+            else:
+                self._welcome_width = -1
+            event.app.invalidate()
+
+        # -- Regular submit --
         @kb.add("enter", filter=has_focus(self.input_field) & _not_modal, eager=True)
         def submit(event):
             text = self.input_field.text.strip()
@@ -326,9 +439,7 @@ class HiveApp:
                 self.input_field.text = ""
                 self.handle_input(text)
 
-        # Trust dialog: ← → to choose, Enter to confirm
-        _trust_active = Condition(lambda: self._awaiting_trust)
-
+        # -- Trust dialog: ← → to choose, Enter to confirm --
         @kb.add("left", filter=_trust_active, eager=True)
         def trust_left(event):
             self._trust_choice = 0
@@ -349,14 +460,36 @@ class HiveApp:
                 add_session_handler(str(self._session.log_path))
                 self._history_path = self._session.history_path
                 self._awaiting_trust = False
-                self._welcome_width = -1
+                self._picking_language = True
+                self._lang_idx = 0
+                self._lang_panel_key = (-1, -1)
                 event.app.invalidate()
             else:
                 event.app.exit()
 
-        # Resume picker: ↑ ↓ to navigate, Enter to confirm, Esc to cancel
-        _resume_active = Condition(lambda: self._resuming)
+        # -- Language picker: ↑ ↓ to navigate, Enter to confirm --
+        @kb.add("up", filter=_lang_active, eager=True)
+        def lang_up(event):
+            self._lang_idx = max(0, self._lang_idx - 1)
+            self._lang_panel_key = (-1, -1)
+            event.app.invalidate()
 
+        @kb.add("down", filter=_lang_active, eager=True)
+        def lang_down(event):
+            self._lang_idx = min(len(LANG_OPTIONS) - 1, self._lang_idx + 1)
+            self._lang_panel_key = (-1, -1)
+            event.app.invalidate()
+
+        @kb.add("enter", filter=_lang_active, eager=True)
+        def lang_confirm(event):
+            lang_code = LANG_OPTIONS[self._lang_idx][0]
+            set_language(self._cwd, lang_code)
+            self._lang = lang_code
+            self._picking_language = False
+            self._welcome_width = -1
+            event.app.invalidate()
+
+        # -- Resume picker: ↑ ↓ to navigate, Enter to confirm, Esc to cancel --
         @kb.add("up", filter=_resume_active, eager=True)
         def resume_up(event):
             self._resume_idx = max(0, self._resume_idx - 1)
@@ -382,8 +515,8 @@ class HiveApp:
             self._welcome_width = -1
             event.app.invalidate()
 
-        # History navigation: only when not in resume picker
-        @kb.add("up", filter=has_focus(self.input_field) & _not_resuming, eager=True)
+        # -- History navigation (guarded against all pickers and name prompt) --
+        @kb.add("up", filter=has_focus(self.input_field) & _not_picker, eager=True)
         def history_up(event):
             buf = event.current_buffer
             if buf.document.cursor_position_row > 0:
@@ -399,7 +532,7 @@ class HiveApp:
                     self._history_idx -= 1
                     self.input_field.text = self._history[self._history_idx]
 
-        @kb.add("down", filter=has_focus(self.input_field) & _not_resuming, eager=True)
+        @kb.add("down", filter=has_focus(self.input_field) & _not_picker, eager=True)
         def history_down(event):
             buf = event.current_buffer
             if buf.document.cursor_position_row < buf.document.line_count - 1:
@@ -494,49 +627,70 @@ class HiveApp:
         """Return the prompt_toolkit fragments for the current visible slice."""
         width = self._current_width()
 
+        def _slice(lines: list[str]) -> list:
+            available = self._output_height()
+            total = len(lines)
+            if total == 0:
+                return []
+            start = max(0, total - available)
+            return list(to_formatted_text(ANSI("\n".join(lines[start:]))))
+
+        if self._awaiting_name:
+            if width != self._name_panel_width:
+                self._name_panel_width = width
+                self._welcome_lines = self._render_to_lines(
+                    _build_name_panel(self._name_is_rename), width
+                )
+            return _slice(self._welcome_lines)
+
         if self._awaiting_trust:
             trust_key = (width, self._trust_choice)
             if trust_key != self._trust_panel_key:
                 self._trust_panel_key = trust_key
                 self._welcome_lines = self._render_to_lines(
-                    _build_trust_panel(self._cwd, width, self._trust_choice), width
+                    _build_trust_panel(
+                        self._cwd, width, self._trust_choice, self._lang
+                    ),
+                    width,
                 )
-            available = self._output_height()
-            total = len(self._welcome_lines)
-            if total == 0:
-                return []
-            start = max(0, total - available)
-            return list(to_formatted_text(ANSI("\n".join(self._welcome_lines[start:]))))
+            return _slice(self._welcome_lines)
+
+        if self._picking_language:
+            lang_key = (width, self._lang_idx)
+            if lang_key != self._lang_panel_key:
+                self._lang_panel_key = lang_key
+                self._welcome_lines = self._render_to_lines(
+                    _build_language_panel(LANG_OPTIONS, self._lang_idx, width), width
+                )
+            return _slice(self._welcome_lines)
 
         if self._resuming:
             resume_key = (width, self._resume_idx)
             if resume_key != self._resume_panel_key:
                 self._resume_panel_key = resume_key
                 self._welcome_lines = self._render_to_lines(
-                    _build_resume_panel(self._resume_sessions, self._resume_idx, width),
+                    _build_resume_panel(
+                        self._resume_sessions, self._resume_idx, width, self._lang
+                    ),
                     width,
                 )
-            available = self._output_height()
-            total = len(self._welcome_lines)
-            if total == 0:
-                return []
-            start = max(0, total - available)
-            return list(to_formatted_text(ANSI("\n".join(self._welcome_lines[start:]))))
+            return _slice(self._welcome_lines)
 
         if width != self._welcome_width:
             self._welcome_width = width
             session_id = self._session.id if self._session else None
             self._welcome_lines = self._render_to_lines(
-                _build_welcome(width, self._cwd, session_id), width
+                _build_welcome(
+                    width, self._cwd, session_id, self._user_name, self._lang
+                ),
+                width,
             )
 
         available = self._output_height()
         all_lines = self._welcome_lines + self._output_lines
         total = len(all_lines)
-
         if total == 0:
             return []
-
         end = min(total, max(available, total - self._scroll_offset))
         start = max(0, end - available)
         return list(to_formatted_text(ANSI("\n".join(all_lines[start:end]))))
@@ -570,10 +724,29 @@ class HiveApp:
             self.app.exit()
             return
 
+        if text == "/name":
+            self._name_is_rename = True
+            self._name_panel_width = -1
+            self._awaiting_name = True
+            if self.app.is_running:
+                self.app.invalidate()
+            return
+
+        if text == "/language":
+            self._lang_idx = next(
+                (i for i, (code, _) in enumerate(LANG_OPTIONS) if code == self._lang),
+                0,
+            )
+            self._lang_panel_key = (-1, -1)
+            self._picking_language = True
+            if self.app.is_running:
+                self.app.invalidate()
+            return
+
         if text == "/resume":
             sessions = list_sessions(self._cwd)
             if not sessions:
-                self.print("[dim]No sessions to resume.[/dim]")
+                self.print(t("sessions.none_resume", self._lang))
                 return
             self._resume_sessions = sessions
             self._resume_idx = 0
@@ -586,12 +759,12 @@ class HiveApp:
         if text == "/sessions":
             sessions = list_sessions(self._cwd)
             if not sessions:
-                self.print("[dim]No sessions found.[/dim]")
+                self.print(t("sessions.none", self._lang))
                 return
-            table = Table(title="Sessions", border_style="#FFC107")
-            table.add_column("ID", style="#FFC107")
-            table.add_column("Started")
-            table.add_column("Commands", justify="right")
+            table = Table(title=t("sessions.title", self._lang), border_style="#FFC107")
+            table.add_column(t("sessions.col.id", self._lang), style="#FFC107")
+            table.add_column(t("sessions.col.started", self._lang))
+            table.add_column(t("sessions.col.commands", self._lang), justify="right")
             for s in sessions:
                 cmd_count = 0
                 if s.history_path.exists():
@@ -614,4 +787,4 @@ class HiveApp:
         self.app.run()
         if self._session:
             save_output(self._session, self._output_lines)
-            print(f"\nTo resume:  hive --resume {self._session.id}")
+            print(t("exit.resume", self._lang).format(id=self._session.id))

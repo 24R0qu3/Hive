@@ -5,12 +5,17 @@ import pytest
 
 from hive.workspace import (
     create_workspace,
+    get_config,
+    get_language,
     get_session,
+    has_language,
     is_trusted,
     list_sessions,
     load_output,
     new_session,
+    save_config,
     save_output,
+    set_language,
 )
 
 # ---------------------------------------------------------------------------
@@ -290,3 +295,88 @@ def test_add_session_handler_is_file_handler(tmp_path):
 
     handler = add_session_handler(str(tmp_path / "s.log"))
     assert isinstance(handler, logging.FileHandler)
+
+
+# ---------------------------------------------------------------------------
+# get_config / save_config
+# ---------------------------------------------------------------------------
+
+
+def test_get_config_returns_empty_dict_when_no_file(tmp_path):
+    create_workspace(tmp_path)
+    assert get_config(tmp_path) == {}
+
+
+def test_get_config_returns_empty_dict_when_no_workspace(tmp_path):
+    assert get_config(tmp_path) == {}
+
+
+def test_save_and_get_config_roundtrip(tmp_path):
+    create_workspace(tmp_path)
+    save_config(tmp_path, {"foo": "bar", "num": 42})
+    assert get_config(tmp_path) == {"foo": "bar", "num": 42}
+
+
+def test_save_config_overwrites_previous(tmp_path):
+    create_workspace(tmp_path)
+    save_config(tmp_path, {"a": 1})
+    save_config(tmp_path, {"b": 2})
+    assert get_config(tmp_path) == {"b": 2}
+
+
+def test_save_config_creates_file(tmp_path):
+    create_workspace(tmp_path)
+    save_config(tmp_path, {"x": "y"})
+    assert (tmp_path / ".hive" / "config.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# has_language / get_language / set_language
+# ---------------------------------------------------------------------------
+
+
+def test_has_language_false_when_no_config(tmp_path):
+    create_workspace(tmp_path)
+    assert has_language(tmp_path) is False
+
+
+def test_has_language_false_when_key_missing(tmp_path):
+    create_workspace(tmp_path)
+    save_config(tmp_path, {"other": "value"})
+    assert has_language(tmp_path) is False
+
+
+def test_has_language_true_after_set(tmp_path):
+    create_workspace(tmp_path)
+    set_language(tmp_path, "en")
+    assert has_language(tmp_path) is True
+
+
+def test_get_language_none_when_not_set(tmp_path):
+    create_workspace(tmp_path)
+    assert get_language(tmp_path) is None
+
+
+def test_get_language_none_when_no_workspace(tmp_path):
+    assert get_language(tmp_path) is None
+
+
+def test_set_language_persists(tmp_path):
+    create_workspace(tmp_path)
+    set_language(tmp_path, "de")
+    assert get_language(tmp_path) == "de"
+
+
+def test_set_language_overwrites(tmp_path):
+    create_workspace(tmp_path)
+    set_language(tmp_path, "en")
+    set_language(tmp_path, "de")
+    assert get_language(tmp_path) == "de"
+
+
+def test_set_language_preserves_other_config_keys(tmp_path):
+    create_workspace(tmp_path)
+    save_config(tmp_path, {"other": "keep"})
+    set_language(tmp_path, "en")
+    assert get_config(tmp_path)["other"] == "keep"
+    assert get_config(tmp_path)["language"] == "en"
