@@ -11,6 +11,8 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import Layout
 from prompt_toolkit.layout.containers import HSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
+from prompt_toolkit.lexers import Lexer
+from prompt_toolkit.styles import Style
 from prompt_toolkit.widgets import Frame, TextArea
 from rich.console import Console, Group
 from rich.panel import Panel
@@ -36,6 +38,26 @@ from hive.workspace import (
 logger = logging.getLogger(__name__)
 
 _WIDE_THRESHOLD = 80
+
+_STYLE = Style.from_dict({"slash-cmd": "#FFC107 bold"})
+
+
+class _SlashLexer(Lexer):
+    """Highlights the slash-command word on the first line of the input."""
+
+    def lex_document(self, document):
+        lines = document.lines
+
+        def get_line(lineno):
+            line = lines[lineno]
+            if lineno == 0 and line.startswith("/"):
+                space = line.find(" ")
+                if space == -1:
+                    return [("class:slash-cmd", line)]
+                return [("class:slash-cmd", line[:space]), ("", line[space:])]
+            return [("", line)]
+
+        return get_line
 
 
 # ---------------------------------------------------------------------------
@@ -356,6 +378,7 @@ class HiveApp:
             multiline=True,
             wrap_lines=True,
             scrollbar=False,
+            lexer=_SlashLexer(),
             get_line_prefix=lambda lineno, wrap_count: (
                 "  " if lineno > 0 or wrap_count > 0 else ""
             ),
@@ -459,6 +482,7 @@ class HiveApp:
                 self._session = new_session(self._cwd)
                 add_session_handler(str(self._session.log_path))
                 self._history_path = self._session.history_path
+                self._needs_trust = False
                 self._awaiting_trust = False
                 self._picking_language = True
                 self._lang_idx = 0
@@ -579,7 +603,7 @@ class HiveApp:
             focused_element=self.input_field,
         )
 
-        self.app = Application(layout=layout, key_bindings=kb, full_screen=True)
+        self.app = Application(layout=layout, key_bindings=kb, full_screen=True, style=_STYLE)
 
     # -----------------------------------------------------------------------
     # Internal helpers
