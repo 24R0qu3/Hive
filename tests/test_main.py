@@ -62,7 +62,7 @@ def make_parser():
     parser.add_argument("--log", default="WARNING", choices=LEVELS)
     parser.add_argument("--log-file", default="DEBUG", choices=LEVELS)
     parser.add_argument("--log-path", default=None)
-    parser.add_argument("--session", default=None, metavar="ID")
+    parser.add_argument("--resume", default=None, metavar="ID")
     parser.add_argument("--list-sessions", action="store_true")
     return parser
 
@@ -102,14 +102,14 @@ def test_invalid_level_rejected():
         make_parser().parse_args(["--log", "VERBOSE"])
 
 
-def test_default_session():
+def test_default_resume():
     args = make_parser().parse_args([])
-    assert args.session is None
+    assert args.resume is None
 
 
-def test_session_arg():
-    args = make_parser().parse_args(["--session", "a3f9b2"])
-    assert args.session == "a3f9b2"
+def test_resume_arg():
+    args = make_parser().parse_args(["--resume", "a3f9b2"])
+    assert args.resume == "a3f9b2"
 
 
 def test_list_sessions_default_false():

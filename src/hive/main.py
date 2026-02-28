@@ -19,7 +19,7 @@ def run():
     )
     parser.add_argument("--log-path", default=None, help="Path to log file")
     parser.add_argument(
-        "--session", default=None, metavar="ID", help="Resume a session by ID"
+        "--resume", default=None, metavar="ID", help="Resume a session by ID"
     )
     parser.add_argument(
         "--list-sessions", action="store_true", help="Print sessions and exit"
@@ -35,15 +35,15 @@ def run():
     session = None
     trusted = False
 
-    if args.session:
+    if args.resume:
         from hive.workspace import get_session, is_trusted
 
         if not is_trusted(cwd):
             print(f"No .hive workspace found in {cwd}")
             return
-        session = get_session(cwd, args.session)
+        session = get_session(cwd, args.resume)
         if session is None:
-            print(f"Session '{args.session}' not found in {cwd}")
+            print(f"Session '{args.resume}' not found in {cwd}")
             return
         trusted = True
     else:

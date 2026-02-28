@@ -41,7 +41,7 @@ hive [OPTIONS]
 | `--log` | `WARNING` | Console log level |
 | `--log-file` | `DEBUG` | File log level |
 | `--log-path` | platform default | Path to log file |
-| `--session <id>` | — | Resume a previous session |
+| `--resume <id>` | — | Resume a previous session |
 | `--list-sessions` | — | Print sessions for the current directory and exit |
 
 **Log levels:** `DEBUG`, `INFO`, `WARNING`, `ERROR`
@@ -51,7 +51,7 @@ hive [OPTIONS]
 ```bash
 hive                                      # start or resume workspace in current directory
 hive --list-sessions                      # show all sessions for this directory
-hive --session a3f9b2                     # resume session a3f9b2
+hive --resume a3f9b2                      # resume session a3f9b2
 hive --log DEBUG                          # verbose console output
 hive --log-path ./logs/hive.log           # custom log file location
 ```
