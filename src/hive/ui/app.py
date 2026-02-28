@@ -88,7 +88,7 @@ def _build_welcome(
         cwd_str = str(cwd)
         max_cwd_len = inner_width - len(session_tag) - 2
         if len(cwd_str) > max_cwd_len and max_cwd_len > 3:
-            cwd_str = "…" + cwd_str[-(max_cwd_len - 1):]
+            cwd_str = "…" + cwd_str[-(max_cwd_len - 1) :]
         gap = max(1, inner_width - len(cwd_str) - len(session_tag))
         info_line = Text.assemble(
             (cwd_str, "dim"),
@@ -106,7 +106,7 @@ def _build_welcome(
     elif cwd is not None:
         cwd_str = str(cwd)
         if len(cwd_str) > inner_width - 1 and inner_width > 3:
-            cwd_str = "…" + cwd_str[-(inner_width - 2):]
+            cwd_str = "…" + cwd_str[-(inner_width - 2) :]
         hints = Group(
             Text(cwd_str, style="dim"),
             Text(
@@ -158,7 +158,7 @@ def _build_welcome(
 def _build_trust_panel(cwd: Path, width: int = 0, choice: int = 0) -> Panel:
     """Build the trust prompt panel with arrow-key selectable Yes / No."""
     yes_style = "bold #FFC107" if choice == 0 else "dim"
-    no_style  = "bold #FFC107" if choice == 1 else "dim"
+    no_style = "bold #FFC107" if choice == 1 else "dim"
 
     options = Text.assemble(
         ("▶ " if choice == 0 else "  ", yes_style),
@@ -267,7 +267,7 @@ class HiveApp:
         self._history_draft: str = ""
 
         # --- trust dialog state ---
-        self._trust_choice: int = 0          # 0 = Yes, 1 = No
+        self._trust_choice: int = 0  # 0 = Yes, 1 = No
         self._trust_panel_key: tuple = (-1, -1)  # (width, choice)
 
         # --- resume picker state ---
@@ -365,9 +365,7 @@ class HiveApp:
 
         @kb.add("down", filter=_resume_active, eager=True)
         def resume_down(event):
-            self._resume_idx = min(
-                len(self._resume_sessions) - 1, self._resume_idx + 1
-            )
+            self._resume_idx = min(len(self._resume_sessions) - 1, self._resume_idx + 1)
             self._resume_panel_key = (-1, -1)
             event.app.invalidate()
 
@@ -599,7 +597,9 @@ class HiveApp:
                 if s.history_path.exists():
                     lines = [
                         ln
-                        for ln in s.history_path.read_text(encoding="utf-8").splitlines()
+                        for ln in s.history_path.read_text(
+                            encoding="utf-8"
+                        ).splitlines()
                         if ln.strip()
                     ]
                     cmd_count = len(lines)
