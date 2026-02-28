@@ -36,3 +36,15 @@ def setup(
     root.addHandler(file)
 
     return console, file
+
+
+def add_session_handler(log_path: str, file_level: str = "DEBUG") -> logging.Handler:
+    """Attach a plain FileHandler for the current session log."""
+    root = logging.getLogger()
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    Path(log_path).parent.mkdir(parents=True, exist_ok=True)
+    handler = logging.FileHandler(log_path, encoding="utf-8")
+    handler.setLevel(getattr(logging, file_level.upper(), logging.DEBUG))
+    handler.setFormatter(formatter)
+    root.addHandler(handler)
+    return handler

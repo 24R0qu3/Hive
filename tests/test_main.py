@@ -62,6 +62,8 @@ def make_parser():
     parser.add_argument("--log", default="WARNING", choices=LEVELS)
     parser.add_argument("--log-file", default="DEBUG", choices=LEVELS)
     parser.add_argument("--log-path", default=None)
+    parser.add_argument("--session", default=None, metavar="ID")
+    parser.add_argument("--list-sessions", action="store_true")
     return parser
 
 
@@ -98,3 +100,62 @@ def test_custom_log_path():
 def test_invalid_level_rejected():
     with pytest.raises(SystemExit):
         make_parser().parse_args(["--log", "VERBOSE"])
+
+
+def test_default_session():
+    args = make_parser().parse_args([])
+    assert args.session is None
+
+
+def test_session_arg():
+    args = make_parser().parse_args(["--session", "a3f9b2"])
+    assert args.session == "a3f9b2"
+
+
+def test_list_sessions_default_false():
+    args = make_parser().parse_args([])
+    assert args.list_sessions is False
+
+
+def test_list_sessions_flag():
+    args = make_parser().parse_args(["--list-sessions"])
+    assert args.list_sessions is True
+
+
+# --- _cmd_list_sessions ---
+
+
+def test_cmd_list_sessions_no_workspace(tmp_path, capsys):
+    from hive.main import _cmd_list_sessions
+
+    _cmd_list_sessions(tmp_path)
+    out = capsys.readouterr().out
+    assert "No sessions" in out
+
+
+def test_cmd_list_sessions_shows_sessions(tmp_path, capsys):
+    from hive.main import _cmd_list_sessions
+    from hive.workspace import create_workspace, new_session
+
+    create_workspace(tmp_path)
+    s = new_session(tmp_path)
+    _cmd_list_sessions(tmp_path)
+    out = capsys.readouterr().out
+    assert s.id in out
+    assert "Sessions in" in out
+
+
+def test_cmd_list_sessions_shows_command_count(tmp_path, capsys):
+    import json as _json
+
+    from hive.main import _cmd_list_sessions
+    from hive.workspace import create_workspace, new_session
+
+    create_workspace(tmp_path)
+    s = new_session(tmp_path)
+    s.history_path.write_text(
+        "\n".join(_json.dumps(e) for e in ["cmd1", "cmd2"]), encoding="utf-8"
+    )
+    _cmd_list_sessions(tmp_path)
+    out = capsys.readouterr().out
+    assert "2" in out

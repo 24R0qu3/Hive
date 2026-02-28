@@ -4,9 +4,8 @@ import logging
 import shutil
 from pathlib import Path
 
-from platformdirs import user_data_dir
 from prompt_toolkit import Application
-from prompt_toolkit.filters import has_focus
+from prompt_toolkit.filters import Condition, has_focus
 from prompt_toolkit.formatted_text import ANSI, to_formatted_text
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import Layout
@@ -19,6 +18,15 @@ from rich.table import Table
 from rich.text import Text
 
 from hive import __version__
+from hive.log import add_session_handler
+from hive.workspace import (
+    Session,
+    create_workspace,
+    list_sessions,
+    load_output,
+    new_session,
+    save_output,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +66,11 @@ def _load_history(path: Path) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def _build_welcome(width: int = 0) -> Panel:
+def _build_welcome(
+    width: int = 0,
+    cwd: Path | None = None,
+    session_id: str | None = None,
+) -> Panel:
     """Build the welcome panel, showing the honeycomb only on wide terminals."""
     logo = Text.assemble(
         ("██╗  ██╗██╗██╗   ██╗███████╗\n", "bold #FFB300"),
@@ -69,11 +81,47 @@ def _build_welcome(width: int = 0) -> Panel:
         ("╚═╝  ╚═╝╚═╝   ╚═╝   ╚══════╝", "bold #FFD54F"),
     )
 
-    hints = Text(
-        "Enter · Ctrl+J for newline · Ctrl+C · /exit",
-        style="dim",
-        justify="left",
-    )
+    # Build bottom info lines (CWD + session tag, then key hints)
+    inner_width = max(1, width - 4)  # subtract panel borders + padding
+
+    if cwd is not None and session_id is not None:
+        session_tag = f"#{session_id}"
+        cwd_str = str(cwd)
+        max_cwd_len = inner_width - len(session_tag) - 2
+        if len(cwd_str) > max_cwd_len and max_cwd_len > 3:
+            cwd_str = "…" + cwd_str[-(max_cwd_len - 1):]
+        gap = max(1, inner_width - len(cwd_str) - len(session_tag))
+        info_line = Text.assemble(
+            (cwd_str, "dim"),
+            (" " * gap, ""),
+            (session_tag, "dim #FFC107"),
+        )
+        hints: object = Group(
+            info_line,
+            Text(
+                "Enter · Ctrl+J for newline · Ctrl+C · /exit",
+                style="dim",
+                justify="left",
+            ),
+        )
+    elif cwd is not None:
+        cwd_str = str(cwd)
+        if len(cwd_str) > inner_width - 1 and inner_width > 3:
+            cwd_str = "…" + cwd_str[-(inner_width - 2):]
+        hints = Group(
+            Text(cwd_str, style="dim"),
+            Text(
+                "Enter · Ctrl+J for newline · Ctrl+C · /exit",
+                style="dim",
+                justify="left",
+            ),
+        )
+    else:
+        hints = Text(
+            "Enter · Ctrl+J for newline · Ctrl+C · /exit",
+            style="dim",
+            justify="left",
+        )
 
     if width >= _WIDE_THRESHOLD:
         # Two hexagon shapes with an amber-to-red gradient radiating outward.
@@ -109,13 +157,59 @@ def _build_welcome(width: int = 0) -> Panel:
     )
 
 
+def _build_trust_panel(cwd: Path, width: int = 0) -> Panel:
+    """Build the trust prompt panel."""
+    content = Group(
+        Text(""),
+        Text("Hive wants to create a local workspace in:", justify="center"),
+        Text(""),
+        Text(str(cwd), style="bold", justify="center"),
+        Text(""),
+        Text(
+            "This will create a .hive folder for session",
+            justify="center",
+        ),
+        Text("history, logs, and output.", justify="center"),
+        Text(""),
+        Text("[Y] Trust & continue    [N] Exit", style="bold #FFC107", justify="center"),
+        Text(""),
+    )
+    return Panel(
+        content,
+        title=f"[bold #FFC107]v{__version__}[/bold #FFC107]",
+        title_align="left",
+        border_style="#FFC107",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Application
 # ---------------------------------------------------------------------------
 
 
 class HiveApp:
-    def __init__(self):
+    def __init__(
+        self,
+        cwd: Path,
+        session: Session | None = None,
+        trusted: bool = False,
+    ):
+        self._cwd = cwd
+        self._awaiting_trust = not trusted and session is None
+
+        # Set up or create session immediately when trust already established
+        if session is not None:
+            # Resuming an existing session
+            self._session: Session | None = session
+            add_session_handler(str(session.log_path))
+        elif trusted:
+            # .hive/ already exists — start a fresh session for this run
+            self._session = new_session(cwd)
+            add_session_handler(str(self._session.log_path))
+        else:
+            # Awaiting trust — no session yet
+            self._session = None
+
         # --- output state ---
         # Welcome and output are stored as separate lists of ANSI text lines.
         # _get_fragments slices the visible portion from the bottom so that new
@@ -125,11 +219,17 @@ class HiveApp:
         self._output_lines: list[str] = []
         self._scroll_offset: int = 0  # 0 = pinned to bottom; positive = scrolled up
 
+        # Restore output if resuming a session
+        if session is not None and session.output_path.exists():
+            self._output_lines = load_output(session)
+
         # --- history ---
-        history_path = Path(user_data_dir("hive", appauthor=False)) / "history"
-        history_path.parent.mkdir(parents=True, exist_ok=True)
-        self._history: list[str] = _load_history(history_path)
-        self._history_path = history_path
+        if self._session is not None:
+            self._history_path: Path | None = self._session.history_path
+            self._history: list[str] = _load_history(self._history_path)
+        else:
+            self._history_path = None
+            self._history = []
         self._history_idx: int = len(self._history)
         self._history_draft: str = ""  # preserves typed text while navigating history
 
@@ -170,17 +270,34 @@ class HiveApp:
 
         @kb.add("enter", filter=has_focus(self.input_field), eager=True)
         def submit(event):
+            if self._awaiting_trust:
+                return
             text = self.input_field.text.strip()
             if text:
                 self._history.append(text)
                 self._history_idx = len(self._history)
                 self._history_draft = ""
-                self._history_path.write_text(
-                    "\n".join(json.dumps(e) for e in self._history),
-                    encoding="utf-8",
-                )
+                if self._history_path is not None:
+                    self._history_path.write_text(
+                        "\n".join(json.dumps(e) for e in self._history),
+                        encoding="utf-8",
+                    )
                 self.input_field.text = ""
                 self.handle_input(text)
+
+        @kb.add("y", filter=Condition(lambda: self._awaiting_trust), eager=True)
+        def trust_yes(event):
+            create_workspace(self._cwd)
+            self._session = new_session(self._cwd)
+            add_session_handler(str(self._session.log_path))
+            self._history_path = self._session.history_path
+            self._awaiting_trust = False
+            self._welcome_width = -1  # force welcome re-render
+            event.app.invalidate()
+
+        @kb.add("n", filter=Condition(lambda: self._awaiting_trust), eager=True)
+        def trust_no(event):
+            event.app.exit()
 
         # Up/Down behave like a shell: move the cursor within multi-line input
         # first; only navigate history once the cursor reaches the top/bottom edge.
@@ -302,14 +419,33 @@ class HiveApp:
     def _get_fragments(self) -> list:
         """Return the prompt_toolkit fragments for the current visible slice.
 
-        Re-renders the welcome panel when the terminal width changes.
+        When awaiting trust, renders the trust panel instead of normal output.
+        Otherwise, re-renders the welcome panel when the terminal width changes.
         Slices the last N lines from (welcome + output) that fit the output
         area so new content pushes older content — including the welcome — upward.
         """
         width = self._current_width()
+
+        if self._awaiting_trust:
+            if width != self._welcome_width:
+                self._welcome_width = width
+                self._welcome_lines = self._render_to_lines(
+                    _build_trust_panel(self._cwd, width), width
+                )
+            available = self._output_height()
+            total = len(self._welcome_lines)
+            if total == 0:
+                return []
+            start = max(0, total - available)
+            visible = self._welcome_lines[start:]
+            return list(to_formatted_text(ANSI("\n".join(visible))))
+
         if width != self._welcome_width:
             self._welcome_width = width
-            self._welcome_lines = self._render_to_lines(_build_welcome(width), width)
+            session_id = self._session.id if self._session else None
+            self._welcome_lines = self._render_to_lines(
+                _build_welcome(width, self._cwd, session_id), width
+            )
 
         available = self._output_height()
         all_lines = self._welcome_lines + self._output_lines
@@ -341,8 +477,31 @@ class HiveApp:
         if text == "/exit":
             self.app.exit()
             return
+        if text == "/sessions":
+            sessions = list_sessions(self._cwd)
+            if not sessions:
+                self.print("[dim]No sessions found.[/dim]")
+                return
+            table = Table(title="Sessions", border_style="#FFC107")
+            table.add_column("ID", style="#FFC107")
+            table.add_column("Started")
+            table.add_column("Commands", justify="right")
+            for s in sessions:
+                cmd_count = 0
+                if s.history_path.exists():
+                    lines = [
+                        ln
+                        for ln in s.history_path.read_text(encoding="utf-8").splitlines()
+                        if ln.strip()
+                    ]
+                    cmd_count = len(lines)
+                table.add_row(s.id, s.started, str(cmd_count))
+            self.print(table)
+            return
         self.print(f"[#FFC107]→[/#FFC107] {text}")
 
     def run(self):
         logger.debug("HiveApp started")
         self.app.run()
+        if self._session:
+            save_output(self._session, self._output_lines)
