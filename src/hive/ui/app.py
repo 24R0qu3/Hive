@@ -171,7 +171,9 @@ def _build_trust_panel(cwd: Path, width: int = 0) -> Panel:
         ),
         Text("history, logs, and output.", justify="center"),
         Text(""),
-        Text("[Y] Trust & continue    [N] Exit", style="bold #FFC107", justify="center"),
+        Text("[Y] Trust & continue    [N] Exit",
+              style="bold #FFC107",
+                justify="center"),
         Text(""),
     )
     return Panel(
@@ -491,7 +493,9 @@ class HiveApp:
                 if s.history_path.exists():
                     lines = [
                         ln
-                        for ln in s.history_path.read_text(encoding="utf-8").splitlines()
+                        for ln in s.history_path.
+                        read_text(encoding="utf-8").
+                        splitlines()
                         if ln.strip()
                     ]
                     cmd_count = len(lines)

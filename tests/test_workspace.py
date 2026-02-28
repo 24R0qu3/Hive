@@ -4,7 +4,6 @@ import logging
 import pytest
 
 from hive.workspace import (
-    Session,
     create_workspace,
     get_session,
     is_trusted,
@@ -13,7 +12,6 @@ from hive.workspace import (
     new_session,
     save_output,
 )
-
 
 # ---------------------------------------------------------------------------
 # is_trusted
