@@ -76,6 +76,7 @@ Type a command in the input field and press `Enter`:
 | `/resume` | Open an inline session picker to switch to a previous session |
 | `/language` | Re-open the language picker to change the project language |
 | `/name` | Change your display name |
+| `/model <name>` | Set the AI model for this session (e.g. `/model mistral`) |
 | `/exit` | Exit Hive |
 
 **Keyboard shortcuts in the input field:**
@@ -105,6 +106,31 @@ When you exit, Hive prints the session ID so you can resume it later:
 ```
 Resume with: hive --resume a3f9b2
 ```
+
+## AI backend
+
+Hive routes every non-command message to a local [Ollama](https://ollama.com) instance for a multi-turn conversation.
+
+**Requirements:** Ollama must be running locally (`ollama serve`) and a model must be pulled:
+
+```bash
+ollama pull llama3.2
+```
+
+The default model is `llama3.2` and can be overridden per project with `/model <name>`. The choice is saved in `.hive/config.json` and restored on resume.
+
+While the model is thinking, Hive shows an animated status line with the elapsed time. The full conversation history is preserved in-session for multi-turn context, and the AI response is displayed directly in the output area.
+
+### Swapping backends
+
+The AI layer is defined by a `typing.Protocol`:
+
+```python
+class AIProvider(Protocol):
+    def chat(self, messages: list[dict], model: str) -> str: ...
+```
+
+Pass any object satisfying this protocol as `provider` when constructing `HiveApp` to use an alternative backend (OpenAI-compatible APIs, mock providers for testing, etc.).
 
 ## Log file location
 

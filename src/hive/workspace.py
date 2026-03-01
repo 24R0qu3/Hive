@@ -117,6 +117,18 @@ def set_language(cwd: Path, lang: str) -> None:
     save_config(cwd, config)
 
 
+def get_model(cwd: Path) -> "str | None":
+    """Return the configured AI model, or None if not set."""
+    return get_config(cwd).get("model")
+
+
+def set_model(cwd: Path, model: str) -> None:
+    """Persist the AI model choice to .hive/config.json."""
+    config = get_config(cwd)
+    config["model"] = model
+    save_config(cwd, config)
+
+
 def save_output(session: Session, lines: list[str]) -> None:
     """Write output lines as JSON-lines to the session output file."""
     session.output_path.write_text(

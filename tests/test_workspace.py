@@ -7,6 +7,7 @@ from hive.workspace import (
     create_workspace,
     get_config,
     get_language,
+    get_model,
     get_session,
     has_language,
     is_trusted,
@@ -16,6 +17,7 @@ from hive.workspace import (
     save_config,
     save_output,
     set_language,
+    set_model,
 )
 
 # ---------------------------------------------------------------------------
@@ -380,3 +382,38 @@ def test_set_language_preserves_other_config_keys(tmp_path):
     set_language(tmp_path, "en")
     assert get_config(tmp_path)["other"] == "keep"
     assert get_config(tmp_path)["language"] == "en"
+
+
+# ---------------------------------------------------------------------------
+# get_model / set_model
+# ---------------------------------------------------------------------------
+
+
+def test_get_model_none_when_not_set(tmp_path):
+    create_workspace(tmp_path)
+    assert get_model(tmp_path) is None
+
+
+def test_get_model_none_when_no_workspace(tmp_path):
+    assert get_model(tmp_path) is None
+
+
+def test_set_model_persists(tmp_path):
+    create_workspace(tmp_path)
+    set_model(tmp_path, "llama3.2")
+    assert get_model(tmp_path) == "llama3.2"
+
+
+def test_set_model_overwrites(tmp_path):
+    create_workspace(tmp_path)
+    set_model(tmp_path, "llama3.2")
+    set_model(tmp_path, "mistral")
+    assert get_model(tmp_path) == "mistral"
+
+
+def test_set_model_preserves_other_config_keys(tmp_path):
+    create_workspace(tmp_path)
+    save_config(tmp_path, {"language": "en"})
+    set_model(tmp_path, "llama3.2")
+    assert get_config(tmp_path)["language"] == "en"
+    assert get_config(tmp_path)["model"] == "llama3.2"

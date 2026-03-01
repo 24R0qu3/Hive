@@ -2,6 +2,8 @@ import io
 import json
 import logging
 import shutil
+import threading
+import time
 from pathlib import Path
 
 from prompt_toolkit import Application
@@ -19,7 +21,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from hive import __version__
+from hive import __version__, ai
 from hive.i18n import LANG_OPTIONS, t
 from hive.log import add_session_handler
 from hive.user import get_user_name, has_user_name, set_user_name
@@ -27,12 +29,14 @@ from hive.workspace import (
     Session,
     create_workspace,
     get_language,
+    get_model,
     has_language,
     list_sessions,
     load_output,
     new_session,
     save_output,
     set_language,
+    set_model,
 )
 
 logger = logging.getLogger(__name__)
@@ -63,7 +67,7 @@ class _SlashLexer(Lexer):
         return get_line
 
 
-_COMMANDS = ["/exit", "/language", "/name", "/resume", "/sessions"]
+_COMMANDS = ["/exit", "/language", "/model", "/name", "/resume", "/sessions"]
 
 
 # ---------------------------------------------------------------------------
@@ -362,6 +366,12 @@ class HiveApp:
         # --- hint state ---
         self._hint_idx: int = 0
 
+        # --- AI state ---
+        self._provider: ai.AIProvider = ai.OllamaProvider()
+        self._model: str = get_model(cwd) or ai.DEFAULT_MODEL
+        self._conversation: list[dict] = []
+        self._ai_thinking: bool = False
+
         # --- output state ---
         self._welcome_lines: list[str] = []
         self._welcome_width: int = -1
@@ -459,6 +469,9 @@ class HiveApp:
         @kb.add("enter", filter=has_focus(self.input_field) & _not_modal, eager=True)
         def submit(event):
             text = self.input_field.text.strip()
+            if self._ai_thinking:
+                self.print(t("ai.busy", self._lang))
+                return
             if text:
                 self._history.append(text)
                 self._history_idx = len(self._history)
@@ -866,7 +879,76 @@ class HiveApp:
             self.print(table)
             return
 
-        self.print(f"[#FFC107]→[/#FFC107] {text}")
+        if text.startswith("/model"):
+            parts = text.split(None, 1)
+            if len(parts) == 1:
+                self.print(t("model.current", self._lang).format(model=self._model))
+            else:
+                new_model = parts[1].strip()
+                if not new_model:
+                    self.print(t("model.usage", self._lang))
+                else:
+                    self._model = new_model
+                    if self._session:
+                        set_model(self._cwd, new_model)
+                    self.print(t("model.set", self._lang).format(model=new_model))
+            return
+
+        self._start_ai_response(text)
+
+    def _start_ai_response(self, user_text: str) -> None:
+        """Echo user input, then call the AI in a background thread with a live timer."""
+        self.print(f"[#FFC107]→[/#FFC107] {user_text}")
+        self._conversation.append({"role": "user", "content": user_text})
+        self._ai_thinking = True
+
+        # Reserve a line in the output for the thinking animation
+        thinking_idx = len(self._output_lines)
+        self._output_lines.append("")
+
+        start = time.monotonic()
+        done = threading.Event()
+        result: list[str | None] = [None]
+        error: list[str | None] = [None]
+        width = self._current_width()
+
+        def _ai_thread() -> None:
+            try:
+                result[0] = self._provider.chat(self._conversation, self._model)
+            except Exception as exc:
+                error[0] = str(exc)
+            finally:
+                done.set()
+
+        def _anim_thread() -> None:
+            msg_idx = 0
+            while not done.wait(timeout=1.0):
+                elapsed = int(time.monotonic() - start)
+                msg = ai.THINKING_MSGS[msg_idx % len(ai.THINKING_MSGS)]
+                msg_idx += 1
+                self._output_lines[thinking_idx] = f"  [dim]{msg}[/dim][dim]... ({elapsed}s)[/dim]"
+                if self.app.is_running:
+                    self.app.invalidate()
+
+            elapsed = int(time.monotonic() - start)
+            self._ai_thinking = False
+
+            if error[0]:
+                self._output_lines[thinking_idx] = (
+                    t("ai.error", self._lang).format(error=error[0])
+                )
+            else:
+                reply = result[0] or ""
+                self._conversation.append({"role": "assistant", "content": reply})
+                reply_lines = self._render_to_lines(reply, width=width)
+                self._output_lines[thinking_idx : thinking_idx + 1] = reply_lines
+
+            self._scroll_offset = 0
+            if self.app.is_running:
+                self.app.invalidate()
+
+        threading.Thread(target=_ai_thread, daemon=True).start()
+        threading.Thread(target=_anim_thread, daemon=True).start()
 
     def run(self):
         logger.debug("HiveApp started")

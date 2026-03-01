@@ -33,6 +33,13 @@ _STRINGS: dict[str, dict[str, str]] = {
         "sessions.col.commands": "Commands",
         "sessions.none": "No sessions found.",
         "sessions.none_resume": "No sessions to resume.",
+        # /model command
+        "model.current": "Model: {model}",
+        "model.set": "Model set to {model}",
+        "model.usage": "Usage: /model <name>   e.g. /model llama3.2",
+        # AI
+        "ai.busy": "Still thinking\u2026 please wait.",
+        "ai.error": "Error: {error}",
         # exit hint
         "exit.resume": "To resume:  hive --resume {id}",
     },
@@ -59,6 +66,13 @@ _STRINGS: dict[str, dict[str, str]] = {
         "sessions.col.commands": "Befehle",
         "sessions.none": "Keine Sitzungen gefunden.",
         "sessions.none_resume": "Keine Sitzungen zum Fortsetzen.",
+        # /model command
+        "model.current": "Modell: {model}",
+        "model.set": "Modell gesetzt auf {model}",
+        "model.usage": "Verwendung: /model <name>   z.B. /model llama3.2",
+        # AI
+        "ai.busy": "Noch am Denken\u2026 bitte warten.",
+        "ai.error": "Fehler: {error}",
         # exit hint
         "exit.resume": "Fortsetzen mit:  hive --resume {id}",
     },
