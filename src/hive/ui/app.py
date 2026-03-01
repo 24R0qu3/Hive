@@ -9,7 +9,7 @@ from prompt_toolkit.filters import Condition, has_focus
 from prompt_toolkit.formatted_text import ANSI, to_formatted_text
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import Layout
-from prompt_toolkit.layout.containers import HSplit, Window
+from prompt_toolkit.layout.containers import ConditionalContainer, HSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.lexers import Lexer
 from prompt_toolkit.styles import Style
@@ -39,7 +39,10 @@ logger = logging.getLogger(__name__)
 
 _WIDE_THRESHOLD = 80
 
-_STYLE = Style.from_dict({"slash-cmd": "#FFC107 bold"})
+_STYLE = Style.from_dict({
+    "slash-cmd": "#FFC107 bold",
+    "hint": "#666666",
+})
 
 
 class _SlashLexer(Lexer):
@@ -58,6 +61,9 @@ class _SlashLexer(Lexer):
             return [("", line)]
 
         return get_line
+
+
+_COMMANDS = ["/exit", "/language", "/name", "/resume", "/sessions"]
 
 
 # ---------------------------------------------------------------------------
@@ -353,6 +359,9 @@ class HiveApp:
         self._resume_idx: int = 0
         self._resume_panel_key: tuple = (-1, -1)
 
+        # --- hint state ---
+        self._hint_idx: int = 0
+
         # --- output state ---
         self._welcome_lines: list[str] = []
         self._welcome_width: int = -1
@@ -539,8 +548,38 @@ class HiveApp:
             self._welcome_width = -1
             event.app.invalidate()
 
-        # -- History navigation (guarded against all pickers and name prompt) --
-        @kb.add("up", filter=has_focus(self.input_field) & _not_picker, eager=True)
+        # -- Inline hint navigation + Tab to accept --
+        def _hint_matches() -> list[str]:
+            text = self.input_field.text
+            if "\n" in text or not text.startswith("/"):
+                return []
+            return [c for c in _COMMANDS if c.startswith(text) and c != text][:5]
+
+        _has_hints = Condition(lambda: bool(_hint_matches()))
+
+        @kb.add("tab", filter=has_focus(self.input_field) & _has_hints & _not_modal, eager=True)
+        def tab_complete(event):
+            matches = _hint_matches()
+            idx = min(self._hint_idx, len(matches) - 1)
+            self.input_field.text = matches[idx]
+            self.input_field.buffer.cursor_position = len(matches[idx])
+            self._hint_idx = 0
+            event.app.invalidate()
+
+        @kb.add("up", filter=has_focus(self.input_field) & _has_hints & _not_picker, eager=True)
+        def hints_up(event):
+            matches = _hint_matches()
+            self._hint_idx = (min(self._hint_idx, len(matches) - 1) - 1) % len(matches)
+            event.app.invalidate()
+
+        @kb.add("down", filter=has_focus(self.input_field) & _has_hints & _not_picker, eager=True)
+        def hints_down(event):
+            matches = _hint_matches()
+            self._hint_idx = (min(self._hint_idx, len(matches) - 1) + 1) % len(matches)
+            event.app.invalidate()
+
+        # -- History navigation (only when hints are not showing) --
+        @kb.add("up", filter=has_focus(self.input_field) & _not_picker & ~_has_hints, eager=True)
         def history_up(event):
             buf = event.current_buffer
             if buf.document.cursor_position_row > 0:
@@ -556,7 +595,7 @@ class HiveApp:
                     self._history_idx -= 1
                     self.input_field.text = self._history[self._history_idx]
 
-        @kb.add("down", filter=has_focus(self.input_field) & _not_picker, eager=True)
+        @kb.add("down", filter=has_focus(self.input_field) & _not_picker & ~_has_hints, eager=True)
         def history_down(event):
             buf = event.current_buffer
             if buf.document.cursor_position_row < buf.document.line_count - 1:
@@ -588,6 +627,29 @@ class HiveApp:
             wrap_lines=False,
         )
 
+        # --- suggestions window (rendered below the input frame) ---
+        def _hints_fragments():
+            matches = _hint_matches()
+            if not matches:
+                return []
+            idx = min(self._hint_idx, len(matches) - 1)
+            parts: list = []
+            for i, cmd in enumerate(matches):
+                if i == idx:
+                    parts += [("class:slash-cmd", f" ▶ {cmd}"), ("", "\n")]
+                else:
+                    parts += [("class:hint", f"   {cmd}"), ("", "\n")]
+            return parts
+
+        hints_window = ConditionalContainer(
+            content=Window(
+                content=FormattedTextControl(_hints_fragments),
+                height=lambda: len(_hint_matches()),
+                dont_extend_height=True,
+            ),
+            filter=_has_hints,
+        )
+
         @kb.add("pageup")
         def scroll_up(event):
             total = len(self._welcome_lines) + len(self._output_lines)
@@ -599,7 +661,7 @@ class HiveApp:
 
         # --- layout ---
         layout = Layout(
-            HSplit([self.output_window, Frame(self.input_field)]),
+            HSplit([self.output_window, Frame(self.input_field), hints_window]),
             focused_element=self.input_field,
         )
 
