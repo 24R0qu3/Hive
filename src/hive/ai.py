@@ -111,9 +111,12 @@ class OllamaProvider:
                 conversation.append({"role": "tool", "content": result})
 
         # Exceeded max rounds — do a final plain call
-        return self._post({"model": model, "messages": conversation, "stream": False})[
-            "message"
-        ].get("content") or ""
+        return (
+            self._post({"model": model, "messages": conversation, "stream": False})[
+                "message"
+            ].get("content")
+            or ""
+        )
 
     def _post(self, payload: dict) -> dict:
         data = json.dumps(payload).encode("utf-8")

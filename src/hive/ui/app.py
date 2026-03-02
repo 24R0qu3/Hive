@@ -376,7 +376,9 @@ class HiveApp:
 
         @kb.add(
             "tab",
-            filter=has_focus(self.input_field) & (_has_hints | _has_inline) & _not_modal,
+            filter=has_focus(self.input_field)
+            & (_has_hints | _has_inline)
+            & _not_modal,
             eager=True,
         )
         @kb.add(
@@ -789,8 +791,7 @@ class HiveApp:
         def _ai_thread() -> None:
             try:
                 result[0] = self._provider.chat(
-                    [{"role": "system", "content": SYSTEM_PROMPT}]
-                    + self._conversation,
+                    [{"role": "system", "content": SYSTEM_PROMPT}] + self._conversation,
                     self._model,
                 )
             except Exception as exc:

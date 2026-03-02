@@ -202,7 +202,10 @@ def test_chat_with_tools_sends_tools_in_payload():
 def test_chat_tool_call_loop_executes_tool_and_returns_final_reply():
     provider = OllamaProvider()
     responses = iter(
-        [_fake_tool_call_response("list_commands", {}), _fake_response("Here are the commands.")]
+        [
+            _fake_tool_call_response("list_commands", {}),
+            _fake_response("Here are the commands."),
+        ]
     )
 
     def fake_urlopen(req, timeout=None):
@@ -225,7 +228,10 @@ def test_chat_tool_call_appends_tool_result_to_conversation():
     provider = OllamaProvider()
     sent_messages: list[list] = []
     responses = iter(
-        [_fake_tool_call_response("get_info", {"name": "/exit"}), _fake_response("Done.")]
+        [
+            _fake_tool_call_response("get_info", {"name": "/exit"}),
+            _fake_response("Done."),
+        ]
     )
 
     def fake_urlopen(req, timeout=None):

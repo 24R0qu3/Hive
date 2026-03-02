@@ -88,7 +88,9 @@ def _get_command_info(name: str) -> str:
             if cmd.notes:
                 parts.append(f"Notes: {cmd.notes}")
             return "\n".join(parts)
-    return f"Unknown command: '{name}'. Use list_commands to see all available commands."
+    return (
+        f"Unknown command: '{name}'. Use list_commands to see all available commands."
+    )
 
 
 def run_tool(name: str, args: dict) -> str:
