@@ -22,7 +22,7 @@ _STRINGS: dict[str, dict[str, str]] = {
         "lang.change_later": "You can change this later with /language",
         # welcome
         "welcome.greeting": "Hello, {name}!",
-        "welcome.hint": "Enter · Ctrl+J for newline · Ctrl+C · /exit",
+        "welcome.hint": "Enter · Shift+Enter newline · Shift+drag to select · Ctrl+C ×2 exit",
         # resume picker
         "resume.heading": "Choose a session to resume:",
         "resume.hint": "↑ ↓ to navigate · Enter to resume · Esc to cancel",
@@ -55,7 +55,7 @@ _STRINGS: dict[str, dict[str, str]] = {
         "lang.change_later": "Später änderbar mit /language",
         # welcome
         "welcome.greeting": "Hallo, {name}!",
-        "welcome.hint": "Enter · Ctrl+J neue Zeile · Ctrl+C · /exit",
+        "welcome.hint": "Enter · Shift+Enter neue Zeile · Shift+Ziehen · Ctrl+C ×2 beenden",
         # resume picker
         "resume.heading": "Sitzung zum Fortsetzen auswählen:",
         "resume.hint": "↑ ↓ navigieren · Enter fortsetzen · Esc abbrechen",

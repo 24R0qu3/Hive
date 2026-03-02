@@ -6,19 +6,24 @@ import time
 from pathlib import Path
 
 from prompt_toolkit import Application
+from prompt_toolkit.auto_suggest import Suggestion
 from prompt_toolkit.filters import Condition, has_focus
 from prompt_toolkit.formatted_text import ANSI, to_formatted_text
+from prompt_toolkit.input.vt100_parser import ANSI_SEQUENCES
 from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout import Layout
 from prompt_toolkit.layout.containers import ConditionalContainer, HSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.lexers import Lexer
+from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
 from prompt_toolkit.styles import Style
 from prompt_toolkit.widgets import Frame, TextArea
 from rich.console import Console
 from rich.table import Table
 
 from hive import ai
+from hive.commands import COMMAND_NAMES, SYSTEM_PROMPT
 from hive.i18n import LANG_OPTIONS, t
 from hive.log import add_session_handler
 from hive.ui.history import HistoryManager
@@ -46,6 +51,10 @@ from hive.workspace import (
 
 logger = logging.getLogger(__name__)
 
+# Windows Terminal (kitty keyboard protocol): Shift+Enter → \x1b[13;2u.
+# Map it to c-j so we can bind newline to that key.
+ANSI_SEQUENCES.setdefault("\x1b[13;2u", Keys.ControlJ)
+
 _STYLE = Style.from_dict(
     {
         "slash-cmd": "#FFC107 bold",
@@ -55,24 +64,31 @@ _STYLE = Style.from_dict(
 
 
 class _SlashLexer(Lexer):
-    """Highlights the slash-command word on the first line of the input."""
+    """Highlights slash-command tokens anywhere in the input."""
 
     def lex_document(self, document):
         lines = document.lines
 
         def get_line(lineno):
             line = lines[lineno]
-            if lineno == 0 and line.startswith("/"):
-                space = line.find(" ")
-                if space == -1:
-                    return [("class:slash-cmd", line)]
-                return [("class:slash-cmd", line[:space]), ("", line[space:])]
-            return [("", line)]
+            parts = line.split(" ")
+            fragments: list = []
+            for i, part in enumerate(parts):
+                if i > 0:
+                    fragments.append(("", " "))
+                if part.startswith("/") and any(
+                    cmd.startswith(part) for cmd in _COMMANDS
+                ):
+                    fragments.append(("class:slash-cmd", part))
+                else:
+                    fragments.append(("", part))
+            return fragments
 
         return get_line
 
 
-_COMMANDS = ["/exit", "/language", "/model", "/name", "/resume", "/sessions"]
+# Bare command names from the registry — used for autocomplete and coloring.
+_COMMANDS = COMMAND_NAMES
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +157,7 @@ class HiveApp:
         self._model: str = get_model(cwd) or ai.DEFAULT_MODEL
         self._conversation: list[dict] = []
         self._ai_thinking: bool = False
+        self._last_ctrl_c: float = 0.0
 
         # --- output state ---
         self._welcome_lines: list[str] = []
@@ -167,6 +184,22 @@ class HiveApp:
                 "  " if lineno > 0 or wrap_count > 0 else ""
             ),
         )
+
+        def _update_suggestion(_buf=None) -> None:
+            text = self.input_field.buffer.document.text
+            self.input_field.buffer.suggestion = None
+            if "\n" in text:
+                return
+            # Match against the last space-separated token if it's a slash prefix
+            last = text.rsplit(" ", 1)[-1]
+            if len(last) > 1 and last.startswith("/"):
+                matches = [c for c in _COMMANDS if c.startswith(last) and c != last]
+                if matches:
+                    self.input_field.buffer.suggestion = Suggestion(
+                        matches[0][len(last) :]
+                    )
+
+        self.input_field.buffer.on_text_changed += _update_suggestion
 
         def get_input_height() -> int:
             try:
@@ -232,6 +265,8 @@ class HiveApp:
         # -- Regular submit --
         @kb.add("enter", filter=has_focus(self.input_field) & _not_modal, eager=True)
         def submit(event):
+            if _hint_matches():
+                return  # let tab_complete handle it
             text = self.input_field.text.strip()
             if self._ai_thinking:
                 self.print(t("ai.busy", self._lang))
@@ -325,18 +360,46 @@ class HiveApp:
                 return []
             return [c for c in _COMMANDS if c.startswith(text) and c != text][:5]
 
+        def _inline_match() -> str | None:
+            """First command matching the last space-separated slash-token, or None."""
+            text = self.input_field.text
+            if "\n" in text or text.startswith("/"):
+                return None
+            last = text.rsplit(" ", 1)[-1]
+            if len(last) > 1 and last.startswith("/"):
+                matches = [c for c in _COMMANDS if c.startswith(last) and c != last]
+                return matches[0] if matches else None
+            return None
+
         _has_hints = Condition(lambda: bool(_hint_matches()))
+        _has_inline = Condition(lambda: _inline_match() is not None)
 
         @kb.add(
             "tab",
+            filter=has_focus(self.input_field) & (_has_hints | _has_inline) & _not_modal,
+            eager=True,
+        )
+        @kb.add(
+            "enter",
             filter=has_focus(self.input_field) & _has_hints & _not_modal,
             eager=True,
         )
         def tab_complete(event):
             matches = _hint_matches()
-            idx = min(self._hint_idx, len(matches) - 1)
-            self.input_field.text = matches[idx]
-            self.input_field.buffer.cursor_position = len(matches[idx])
+            if matches:
+                # Whole input is a slash-command prefix — replace entirely
+                idx = min(self._hint_idx, len(matches) - 1)
+                new_text = matches[idx]
+            else:
+                # Inline slash-command — replace last word only
+                completion = _inline_match()
+                if not completion:
+                    return
+                text = self.input_field.text
+                prefix = text.rsplit(" ", 1)[0]
+                new_text = prefix + " " + completion
+            self.input_field.text = new_text
+            self.input_field.buffer.cursor_position = len(new_text)
             self._hint_idx = 0
             event.app.invalidate()
 
@@ -394,20 +457,60 @@ class HiveApp:
                     self.input_field.text = new_text
                     self.input_field.buffer.cursor_position = len(new_text)
 
-        @kb.add("c-j", filter=has_focus(self.input_field))
+        # -- Right arrow accepts inline ghost suggestion when cursor is at end --
+        _suggestion_visible = Condition(
+            lambda: bool(
+                self.input_field.buffer.suggestion
+                and self.input_field.buffer.document.is_cursor_at_the_end
+            )
+        )
+
+        @kb.add(
+            "right",
+            filter=has_focus(self.input_field) & _suggestion_visible & _not_modal,
+            eager=True,
+        )
+        def accept_suggestion(event):
+            s = event.current_buffer.suggestion
+            if s:
+                event.current_buffer.insert_text(s.text)
+
+        @kb.add("c-j", filter=has_focus(self.input_field), eager=True)
         def newline(event):
             event.current_buffer.newline()
 
         @kb.add("c-c")
+        def ctrl_c(event):
+            now = time.monotonic()
+            if now - self._last_ctrl_c < 0.5:
+                event.app.exit()
+            else:
+                self._last_ctrl_c = now
+
         @kb.add("c-d")
         def exit_app(event):
             event.app.exit()
+
+        # --- scroll handler — patched onto both windows so scroll always goes to output ---
+        def _scroll_output(mouse_event: MouseEvent):
+            total = len(self._welcome_lines) + len(self._output_lines)
+            if mouse_event.event_type == MouseEventType.SCROLL_UP:
+                self._scroll_offset = min(total, self._scroll_offset + 3)
+                self.app.invalidate()
+                return None
+            elif mouse_event.event_type == MouseEventType.SCROLL_DOWN:
+                self._scroll_offset = max(0, self._scroll_offset - 3)
+                self.app.invalidate()
+                return None
+            return NotImplemented
 
         # --- output window ---
         self.output_window = Window(
             content=FormattedTextControl(self._get_fragments, focusable=False),
             wrap_lines=False,
         )
+        self.output_window._mouse_handler = _scroll_output
+        self.input_field.window._mouse_handler = _scroll_output
 
         # --- suggestions window (rendered below the input frame) ---
         def _hints_fragments():
@@ -435,11 +538,11 @@ class HiveApp:
         @kb.add("pageup")
         def scroll_up(event):
             total = len(self._welcome_lines) + len(self._output_lines)
-            self._scroll_offset = min(total, self._scroll_offset + 5)
+            self._scroll_offset = min(total, self._scroll_offset + 3)
 
         @kb.add("pagedown")
         def scroll_down(event):
-            self._scroll_offset = max(0, self._scroll_offset - 5)
+            self._scroll_offset = max(0, self._scroll_offset - 3)
 
         # --- layout ---
         layout = Layout(
@@ -453,6 +556,7 @@ class HiveApp:
             full_screen=True,
             style=_STYLE,
             output=_output,
+            mouse_support=True,
         )
 
     # -----------------------------------------------------------------------
@@ -684,21 +788,26 @@ class HiveApp:
 
         def _ai_thread() -> None:
             try:
-                result[0] = self._provider.chat(self._conversation, self._model)
+                result[0] = self._provider.chat(
+                    [{"role": "system", "content": SYSTEM_PROMPT}]
+                    + self._conversation,
+                    self._model,
+                )
             except Exception as exc:
                 error[0] = str(exc)
             finally:
                 done.set()
 
         def _anim_thread() -> None:
-            msg_idx = 0
+            import random
+
+            msg = random.choice(ai.THINKING_MSGS)
             while not done.wait(timeout=1.0):
                 elapsed = int(time.monotonic() - start)
-                msg = ai.THINKING_MSGS[msg_idx % len(ai.THINKING_MSGS)]
-                msg_idx += 1
-                self._output_lines[thinking_idx] = (
-                    f"  [dim]{msg}[/dim][dim]... ({elapsed}s)[/dim]"
+                rendered = self._render_to_lines(
+                    f"  [dim]{msg}... ({elapsed}s)[/dim]", width=width
                 )
+                self._output_lines[thinking_idx] = rendered[0] if rendered else ""
                 if self.app.is_running:
                     self.app.invalidate()
 
