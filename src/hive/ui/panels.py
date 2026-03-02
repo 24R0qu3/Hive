@@ -1,4 +1,5 @@
 """Pure render functions for Hive's TUI panels."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -9,7 +10,7 @@ from rich.table import Table
 from rich.text import Text
 
 from hive import __version__
-from hive.i18n import LANG_OPTIONS, t
+from hive.i18n import t
 from hive.workspace import Session
 
 _WIDE_THRESHOLD = 80

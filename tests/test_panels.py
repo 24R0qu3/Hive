@@ -1,10 +1,11 @@
 """Tests for hive.ui.panels — pure panel builder functions."""
+
 from pathlib import Path
 
-import pytest
 from rich.console import Console
 from rich.panel import Panel
 
+from hive.i18n import LANG_OPTIONS
 from hive.ui.panels import (
     build_language_panel,
     build_name_panel,
@@ -12,9 +13,7 @@ from hive.ui.panels import (
     build_trust_panel,
     build_welcome,
 )
-from hive.i18n import LANG_OPTIONS
 from hive.workspace import Session
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -92,7 +91,9 @@ def test_build_welcome_shows_session_id(tmp_path):
 
 
 def test_build_welcome_shows_cwd(tmp_path):
-    output = _render(build_welcome(width=100, cwd=tmp_path, session_id="abc123"), width=100)
+    output = _render(
+        build_welcome(width=100, cwd=tmp_path, session_id="abc123"), width=100
+    )
     # Long paths may be truncated with …; check the tail portion is visible
     assert tmp_path.name in output or "…" in output
 
@@ -126,8 +127,12 @@ def test_build_welcome_has_version_in_title():
 
 
 def test_build_welcome_truncates_long_cwd(tmp_path):
-    long_path = Path("/very/very/very/very/very/very/very/very/very/long/path/to/project")
-    output = _render(build_welcome(width=60, cwd=long_path, session_id="abc123"), width=60)
+    long_path = Path(
+        "/very/very/very/very/very/very/very/very/very/long/path/to/project"
+    )
+    output = _render(
+        build_welcome(width=60, cwd=long_path, session_id="abc123"), width=60
+    )
     assert "…" in output or "project" in output
 
 
@@ -141,7 +146,11 @@ def test_build_trust_panel_returns_panel(tmp_path):
 
 
 def test_build_trust_panel_shows_cwd():
-    cwd = Path("C:/project") if __import__("sys").platform == "win32" else Path("/project")
+    cwd = (
+        Path("C:/project")
+        if __import__("sys").platform == "win32"
+        else Path("/project")
+    )
     output = _render(build_trust_panel(cwd))
     assert "project" in output
 

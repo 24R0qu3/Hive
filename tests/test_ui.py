@@ -1,12 +1,12 @@
 """Tests for hive.ui.app — _load_history (via history module) and handle_input."""
+
 import logging
 from unittest.mock import MagicMock
 
 import pytest
 
 from hive.ui.history import load_history_file
-from hive.workspace import create_workspace, new_session, set_language
-
+from hive.workspace import create_workspace, set_language
 
 # ---------------------------------------------------------------------------
 # load_history_file (previously _load_history in app.py)
@@ -18,7 +18,6 @@ def test_returns_empty_when_file_missing(tmp_path):
 
 
 def test_returns_empty_when_file_is_empty(tmp_path):
-    import json
 
     p = tmp_path / "history"
     p.write_text("", encoding="utf-8")
@@ -167,7 +166,9 @@ def test_handle_resume_activates_picker_when_sessions_exist(hive_app):
     assert len(hive_app._resume_sessions) >= 1
 
 
-def test_handle_resume_prints_message_when_no_sessions(tmp_path, monkeypatch, _clean_logger):
+def test_handle_resume_prints_message_when_no_sessions(
+    tmp_path, monkeypatch, _clean_logger
+):
     """With a fresh workspace that has no prior sessions, /resume shows a message."""
     from prompt_toolkit.output import DummyOutput
 
@@ -241,14 +242,18 @@ def test_handle_model_trailing_space_shows_current(hive_app):
 
 def test_handle_non_command_calls_start_ai_response(hive_app, monkeypatch):
     called = []
-    monkeypatch.setattr(hive_app, "_start_ai_response", lambda text: called.append(text))
+    monkeypatch.setattr(
+        hive_app, "_start_ai_response", lambda text: called.append(text)
+    )
     hive_app.handle_input("hello world")
     assert called == ["hello world"]
 
 
 def test_handle_non_command_multiple_words(hive_app, monkeypatch):
     called = []
-    monkeypatch.setattr(hive_app, "_start_ai_response", lambda text: called.append(text))
+    monkeypatch.setattr(
+        hive_app, "_start_ai_response", lambda text: called.append(text)
+    )
     hive_app.handle_input("tell me a joke")
     assert called == ["tell me a joke"]
 

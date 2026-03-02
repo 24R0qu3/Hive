@@ -21,6 +21,14 @@ from rich.table import Table
 from hive import ai
 from hive.i18n import LANG_OPTIONS, t
 from hive.log import add_session_handler
+from hive.ui.history import HistoryManager
+from hive.ui.panels import (
+    build_language_panel,
+    build_name_panel,
+    build_resume_panel,
+    build_trust_panel,
+    build_welcome,
+)
 from hive.user import get_user_name, has_user_name, set_user_name
 from hive.workspace import (
     Session,
@@ -35,21 +43,15 @@ from hive.workspace import (
     set_language,
     set_model,
 )
-from hive.ui.history import HistoryManager
-from hive.ui.panels import (
-    build_language_panel,
-    build_name_panel,
-    build_resume_panel,
-    build_trust_panel,
-    build_welcome,
-)
 
 logger = logging.getLogger(__name__)
 
-_STYLE = Style.from_dict({
-    "slash-cmd": "#FFC107 bold",
-    "hint": "#666666",
-})
+_STYLE = Style.from_dict(
+    {
+        "slash-cmd": "#FFC107 bold",
+        "hint": "#666666",
+    }
+)
 
 
 class _SlashLexer(Lexer):
@@ -325,7 +327,11 @@ class HiveApp:
 
         _has_hints = Condition(lambda: bool(_hint_matches()))
 
-        @kb.add("tab", filter=has_focus(self.input_field) & _has_hints & _not_modal, eager=True)
+        @kb.add(
+            "tab",
+            filter=has_focus(self.input_field) & _has_hints & _not_modal,
+            eager=True,
+        )
         def tab_complete(event):
             matches = _hint_matches()
             idx = min(self._hint_idx, len(matches) - 1)
@@ -334,20 +340,32 @@ class HiveApp:
             self._hint_idx = 0
             event.app.invalidate()
 
-        @kb.add("up", filter=has_focus(self.input_field) & _has_hints & _not_picker, eager=True)
+        @kb.add(
+            "up",
+            filter=has_focus(self.input_field) & _has_hints & _not_picker,
+            eager=True,
+        )
         def hints_up(event):
             matches = _hint_matches()
             self._hint_idx = (min(self._hint_idx, len(matches) - 1) - 1) % len(matches)
             event.app.invalidate()
 
-        @kb.add("down", filter=has_focus(self.input_field) & _has_hints & _not_picker, eager=True)
+        @kb.add(
+            "down",
+            filter=has_focus(self.input_field) & _has_hints & _not_picker,
+            eager=True,
+        )
         def hints_down(event):
             matches = _hint_matches()
             self._hint_idx = (min(self._hint_idx, len(matches) - 1) + 1) % len(matches)
             event.app.invalidate()
 
         # -- History navigation (only when hints are not showing) --
-        @kb.add("up", filter=has_focus(self.input_field) & _not_picker & ~_has_hints, eager=True)
+        @kb.add(
+            "up",
+            filter=has_focus(self.input_field) & _not_picker & ~_has_hints,
+            eager=True,
+        )
         def history_up(event):
             buf = event.current_buffer
             if buf.document.cursor_position_row > 0:
@@ -359,7 +377,11 @@ class HiveApp:
                 if new_text is not None:
                     self.input_field.text = new_text
 
-        @kb.add("down", filter=has_focus(self.input_field) & _not_picker & ~_has_hints, eager=True)
+        @kb.add(
+            "down",
+            filter=has_focus(self.input_field) & _not_picker & ~_has_hints,
+            eager=True,
+        )
         def history_down(event):
             buf = event.current_buffer
             if buf.document.cursor_position_row < buf.document.line_count - 1:
@@ -500,9 +522,7 @@ class HiveApp:
             if trust_key != self._trust_panel_key:
                 self._trust_panel_key = trust_key
                 self._welcome_lines = self._render_to_lines(
-                    build_trust_panel(
-                        self._cwd, width, self._trust_choice, self._lang
-                    ),
+                    build_trust_panel(self._cwd, width, self._trust_choice, self._lang),
                     width,
                 )
             return _slice(self._welcome_lines)
@@ -676,7 +696,9 @@ class HiveApp:
                 elapsed = int(time.monotonic() - start)
                 msg = ai.THINKING_MSGS[msg_idx % len(ai.THINKING_MSGS)]
                 msg_idx += 1
-                self._output_lines[thinking_idx] = f"  [dim]{msg}[/dim][dim]... ({elapsed}s)[/dim]"
+                self._output_lines[thinking_idx] = (
+                    f"  [dim]{msg}[/dim][dim]... ({elapsed}s)[/dim]"
+                )
                 if self.app.is_running:
                     self.app.invalidate()
 
@@ -684,8 +706,8 @@ class HiveApp:
             self._ai_thinking = False
 
             if error[0]:
-                self._output_lines[thinking_idx] = (
-                    t("ai.error", self._lang).format(error=error[0])
+                self._output_lines[thinking_idx] = t("ai.error", self._lang).format(
+                    error=error[0]
                 )
             else:
                 reply = result[0] or ""

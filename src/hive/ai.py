@@ -1,4 +1,5 @@
 """AI provider interface and built-in Ollama implementation."""
+
 from __future__ import annotations
 
 import json

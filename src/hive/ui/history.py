@@ -1,4 +1,5 @@
 """History management for Hive sessions."""
+
 from __future__ import annotations
 
 import json

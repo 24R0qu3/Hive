@@ -1,10 +1,8 @@
 """Tests for hive.ui.history — HistoryManager and load_history_file."""
+
 import json
 
-import pytest
-
 from hive.ui.history import HistoryManager, load_history_file
-
 
 # ---------------------------------------------------------------------------
 # load_history_file
@@ -116,9 +114,7 @@ def test_manager_len_zero_when_empty():
 
 def test_manager_len_matches_entries(tmp_path):
     p = tmp_path / "history"
-    p.write_text(
-        "\n".join(json.dumps(e) for e in ["a", "b", "c"]), encoding="utf-8"
-    )
+    p.write_text("\n".join(json.dumps(e) for e in ["a", "b", "c"]), encoding="utf-8")
     hm = HistoryManager(p)
     assert len(hm) == 3
 

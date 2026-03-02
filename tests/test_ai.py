@@ -1,4 +1,5 @@
 """Tests for hive.ai — provider interface and Ollama implementation."""
+
 import json
 from unittest.mock import MagicMock, patch
 
@@ -11,7 +12,6 @@ from hive.ai import (
     AIProvider,
     OllamaProvider,
 )
-
 
 # ---------------------------------------------------------------------------
 # Constants
