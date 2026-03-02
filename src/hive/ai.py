@@ -6,7 +6,7 @@ import urllib.error
 import urllib.request
 from typing import Protocol, runtime_checkable
 
-DEFAULT_MODEL = "llama3.2"
+DEFAULT_MODEL = "qwen2.5-coder:7b"
 DEFAULT_BASE_URL = "http://localhost:11434"
 
 THINKING_MSGS = [

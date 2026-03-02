@@ -1,5 +1,4 @@
 import io
-import json
 import logging
 import shutil
 import threading
@@ -16,12 +15,10 @@ from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.lexers import Lexer
 from prompt_toolkit.styles import Style
 from prompt_toolkit.widgets import Frame, TextArea
-from rich.console import Console, Group
-from rich.panel import Panel
+from rich.console import Console
 from rich.table import Table
-from rich.text import Text
 
-from hive import __version__, ai
+from hive import ai
 from hive.i18n import LANG_OPTIONS, t
 from hive.log import add_session_handler
 from hive.user import get_user_name, has_user_name, set_user_name
@@ -38,10 +35,16 @@ from hive.workspace import (
     set_language,
     set_model,
 )
+from hive.ui.history import HistoryManager
+from hive.ui.panels import (
+    build_language_panel,
+    build_name_panel,
+    build_resume_panel,
+    build_trust_panel,
+    build_welcome,
+)
 
 logger = logging.getLogger(__name__)
-
-_WIDE_THRESHOLD = 80
 
 _STYLE = Style.from_dict({
     "slash-cmd": "#FFC107 bold",
@@ -71,242 +74,6 @@ _COMMANDS = ["/exit", "/language", "/model", "/name", "/resume", "/sessions"]
 
 
 # ---------------------------------------------------------------------------
-# History helpers
-# ---------------------------------------------------------------------------
-
-
-def _load_history(path: Path) -> list[str]:
-    """Load command history from a JSON-lines file.
-
-    Also migrates the legacy prompt_toolkit FileHistory format
-    (lines prefixed with '+', timestamps prefixed with '#').
-    """
-    if not path.exists():
-        return []
-    entries = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            entries.append(json.loads(line))
-        except json.JSONDecodeError:
-            if line.startswith("+"):
-                entries.append(line[1:])
-    return entries
-
-
-# ---------------------------------------------------------------------------
-# Panel builders
-# ---------------------------------------------------------------------------
-
-
-def _build_name_panel(is_rename: bool = False) -> Panel:
-    """Name prompt panel — always in English, shown before language selection."""
-    heading = "What's your new name?" if is_rename else "Welcome to Hive!"
-    prompt = "Type your name below and press Enter."
-    content = Group(
-        Text(""),
-        Text(heading, style="bold #FFC107", justify="center"),
-        Text(""),
-        Text(prompt, style="dim", justify="center"),
-        Text(""),
-    )
-    return Panel(
-        content,
-        title=f"[bold #FFC107]v{__version__}[/bold #FFC107]",
-        title_align="left",
-        border_style="#FFC107",
-    )
-
-
-def _build_welcome(
-    width: int = 0,
-    cwd: Path | None = None,
-    session_id: str | None = None,
-    name: str | None = None,
-    lang: str = "en",
-) -> Panel:
-    """Build the welcome panel, showing the honeycomb only on wide terminals."""
-    logo = Text.assemble(
-        ("██╗  ██╗██╗██╗   ██╗███████╗\n", "bold #FFB300"),
-        ("██║  ██║██║██║   ██║██╔════╝\n", "bold #FFB300"),
-        ("███████║██║╚██╗ ██╔╝█████╗  \n", "bold #FFC107"),
-        ("██╔══██║██║ ╚████╔╝ ██╔══╝  \n", "bold #FFC107"),
-        ("██║  ██║██║  ╚██╔╝  ███████╗\n", "bold #FFD54F"),
-        ("╚═╝  ╚═╝╚═╝   ╚═╝   ╚══════╝", "bold #FFD54F"),
-    )
-
-    inner_width = max(1, width - 4)
-
-    if cwd is not None and session_id is not None:
-        session_tag = f"#{session_id}"
-        cwd_str = str(cwd)
-        max_cwd_len = inner_width - len(session_tag) - 2
-        if len(cwd_str) > max_cwd_len and max_cwd_len > 3:
-            cwd_str = "…" + cwd_str[-(max_cwd_len - 1) :]
-        gap = max(1, inner_width - len(cwd_str) - len(session_tag))
-        info_line = Text.assemble(
-            (cwd_str, "dim"),
-            (" " * gap, ""),
-            (session_tag, "dim #FFC107"),
-        )
-        hints: object = Group(
-            info_line,
-            Text(t("welcome.hint", lang), style="dim", justify="left"),
-        )
-    elif cwd is not None:
-        cwd_str = str(cwd)
-        if len(cwd_str) > inner_width - 1 and inner_width > 3:
-            cwd_str = "…" + cwd_str[-(inner_width - 2) :]
-        hints = Group(
-            Text(cwd_str, style="dim"),
-            Text(t("welcome.hint", lang), style="dim", justify="left"),
-        )
-    else:
-        hints = Text(t("welcome.hint", lang), style="dim", justify="left")
-
-    greeting = (
-        Text(
-            t("welcome.greeting", lang).format(name=name),
-            style="bold #FFC107",
-            justify="center",
-        )
-        if name
-        else None
-    )
-
-    if width >= _WIDE_THRESHOLD:
-        right = Text.assemble(
-            ("   ⬡ ⬡ ⬡\n", "bold #BF360C"),
-            ("  ⬡ ⬡ ⬡ ⬡\n", "bold #E65100"),
-            (" ⬡ ⬡ ⬡ ⬡ ⬡", "bold #FF8F00"),
-            (" ⬡ ⬡ ⬡\n", "bold #BF360C"),
-            ("  ⬡ ⬡ ⬡ ⬡", "bold #FFC107"),
-            (" ⬡ ⬡ ⬡ ⬡\n", "bold #FF8F00"),
-            ("   ⬡ ⬡ ⬡", "bold #E65100"),
-            (" ⬡ ⬡ ⬡ ⬡ ⬡\n", "bold #FFD54F"),
-            ("  ⬡ ⬡ ⬡ ⬡", "bold #FFC107"),
-            (" ⬡ ⬡ ⬡ ⬡\n", "bold #FFC107"),
-            (" ⬡ ⬡ ⬡ ⬡ ⬡", "bold #FF8F00"),
-            (" ⬡ ⬡ ⬡\n", "bold #BF360C"),
-            ("  ⬡ ⬡ ⬡ ⬡\n", "bold #E65100"),
-            ("   ⬡ ⬡ ⬡", "bold #BF360C"),
-        )
-        grid = Table.grid(padding=(0, 3))
-        grid.add_column(vertical="middle")
-        grid.add_column(vertical="middle")
-        grid.add_row(logo, right)
-        body = Group(Text(""), grid, Text(""), hints)
-        content = Group(greeting, Text(""), body) if greeting else Group(Text(""), body)
-    else:
-        body = Group(Text(""), logo, Text(""), hints)
-        content = Group(greeting, Text(""), body) if greeting else Group(Text(""), body)
-
-    return Panel(
-        content,
-        title=f"[bold #FFC107]v{__version__}[/bold #FFC107]",
-        title_align="left",
-        border_style="#FFC107",
-    )
-
-
-def _build_trust_panel(
-    cwd: Path, width: int = 0, choice: int = 0, lang: str = "en"
-) -> Panel:
-    """Trust prompt panel with arrow-key selectable Yes / No."""
-    yes_style = "bold #FFC107" if choice == 0 else "dim"
-    no_style = "bold #FFC107" if choice == 1 else "dim"
-
-    options = Text.assemble(
-        ("▶ " if choice == 0 else "  ", yes_style),
-        ("[ Yes ]", yes_style),
-        ("    ", ""),
-        ("▶ " if choice == 1 else "  ", no_style),
-        ("[ No  ]", no_style),
-        justify="center",
-    )
-
-    content = Group(
-        Text(""),
-        Text(t("trust.heading", lang), justify="center"),
-        Text(""),
-        Text(str(cwd), style="bold", justify="center"),
-        Text(""),
-        Text(t("trust.body1", lang), justify="center"),
-        Text(t("trust.body2", lang), justify="center"),
-        Text(""),
-        options,
-        Text(""),
-        Text(t("trust.hint", lang), style="dim", justify="center"),
-        Text(""),
-    )
-    return Panel(
-        content,
-        title=f"[bold #FFC107]v{__version__}[/bold #FFC107]",
-        title_align="left",
-        border_style="#FFC107",
-    )
-
-
-def _build_language_panel(lang_options: list, idx: int, width: int = 0) -> Panel:
-    """Language picker panel — heading and hints update to match the highlighted language."""
-    current_lang = lang_options[idx][0]
-
-    rows = []
-    for i, (code, label) in enumerate(lang_options):
-        selected = i == idx
-        prefix = "▶ " if selected else "  "
-        style = "bold #FFC107" if selected else ""
-        rows.append(Text(f"{prefix}{label}", style=style, justify="center"))
-
-    content = Group(
-        Text(""),
-        Text(t("lang.heading", current_lang), justify="center"),
-        Text(""),
-        *rows,
-        Text(""),
-        Text(t("lang.hint", current_lang), style="dim", justify="center"),
-        Text(t("lang.change_later", current_lang), style="dim", justify="center"),
-        Text(""),
-    )
-    return Panel(
-        content,
-        title=f"[bold #FFC107]v{__version__}[/bold #FFC107]",
-        title_align="left",
-        border_style="#FFC107",
-    )
-
-
-def _build_resume_panel(
-    sessions: list[Session], idx: int, width: int = 0, lang: str = "en"
-) -> Panel:
-    """Session resume picker panel."""
-    rows = []
-    for i, s in enumerate(sessions):
-        selected = i == idx
-        prefix = "▶ " if selected else "  "
-        style = "bold #FFC107" if selected else ""
-        rows.append(Text(f"{prefix}{s.id}  {s.started}", style=style))
-
-    content = Group(
-        Text(""),
-        Text(t("resume.heading", lang), justify="center"),
-        Text(""),
-        *rows,
-        Text(""),
-        Text(t("resume.hint", lang), style="dim", justify="center"),
-        Text(""),
-    )
-    return Panel(
-        content,
-        title=f"[bold #FFC107]v{__version__}[/bold #FFC107]",
-        title_align="left",
-        border_style="#FFC107",
-    )
-
-
-# ---------------------------------------------------------------------------
 # Application
 # ---------------------------------------------------------------------------
 
@@ -317,6 +84,7 @@ class HiveApp:
         cwd: Path,
         session: Session | None = None,
         trusted: bool = False,
+        _output=None,  # for testing: pass a DummyOutput to avoid terminal detection
     ):
         self._cwd = cwd
 
@@ -382,14 +150,9 @@ class HiveApp:
             self._output_lines = load_output(session)
 
         # --- history ---
-        if self._session is not None:
-            self._history_path: Path | None = self._session.history_path
-            self._history: list[str] = _load_history(self._history_path)
-        else:
-            self._history_path = None
-            self._history = []
-        self._history_idx: int = len(self._history)
-        self._history_draft: str = ""
+        self._history = HistoryManager(
+            self._session.history_path if self._session is not None else None
+        )
 
         # --- input field ---
         self.input_field = TextArea(
@@ -457,7 +220,6 @@ class HiveApp:
             if self._needs_trust:
                 self._awaiting_trust = True
             elif not has_language(self._cwd):
-                # Existing workspace without language (or rename mid-session without lang)
                 self._picking_language = True
                 self._lang_idx = 0
                 self._lang_panel_key = (-1, -1)
@@ -474,13 +236,6 @@ class HiveApp:
                 return
             if text:
                 self._history.append(text)
-                self._history_idx = len(self._history)
-                self._history_draft = ""
-                if self._history_path is not None:
-                    self._history_path.write_text(
-                        "\n".join(json.dumps(e) for e in self._history),
-                        encoding="utf-8",
-                    )
                 self.input_field.text = ""
                 self.handle_input(text)
 
@@ -503,7 +258,7 @@ class HiveApp:
                 create_workspace(self._cwd)
                 self._session = new_session(self._cwd)
                 add_session_handler(str(self._session.log_path))
-                self._history_path = self._session.history_path
+                self._history.path = self._session.history_path
                 self._needs_trust = False
                 self._awaiting_trust = False
                 self._picking_language = True
@@ -600,13 +355,9 @@ class HiveApp:
             elif buf.document.cursor_position_col > 0:
                 buf.cursor_position = buf.document.get_start_of_line_position()
             else:
-                if not self._history:
-                    return
-                if self._history_idx == len(self._history):
-                    self._history_draft = self.input_field.text
-                if self._history_idx > 0:
-                    self._history_idx -= 1
-                    self.input_field.text = self._history[self._history_idx]
+                new_text = self._history.navigate_back(self.input_field.text)
+                if new_text is not None:
+                    self.input_field.text = new_text
 
         @kb.add("down", filter=has_focus(self.input_field) & _not_picker & ~_has_hints, eager=True)
         def history_down(event):
@@ -616,14 +367,10 @@ class HiveApp:
             elif buf.document.cursor_position_col < len(buf.document.current_line):
                 buf.cursor_position += buf.document.get_end_of_line_position()
             else:
-                if self._history_idx < len(self._history) - 1:
-                    self._history_idx += 1
-                    self.input_field.text = self._history[self._history_idx]
-                    self.input_field.buffer.cursor_position = len(self.input_field.text)
-                elif self._history_idx == len(self._history) - 1:
-                    self._history_idx = len(self._history)
-                    self.input_field.text = self._history_draft
-                    self.input_field.buffer.cursor_position = len(self.input_field.text)
+                new_text = self._history.navigate_forward()
+                if new_text is not None:
+                    self.input_field.text = new_text
+                    self.input_field.buffer.cursor_position = len(new_text)
 
         @kb.add("c-j", filter=has_focus(self.input_field))
         def newline(event):
@@ -678,7 +425,13 @@ class HiveApp:
             focused_element=self.input_field,
         )
 
-        self.app = Application(layout=layout, key_bindings=kb, full_screen=True, style=_STYLE)
+        self.app = Application(
+            layout=layout,
+            key_bindings=kb,
+            full_screen=True,
+            style=_STYLE,
+            output=_output,
+        )
 
     # -----------------------------------------------------------------------
     # Internal helpers
@@ -738,7 +491,7 @@ class HiveApp:
             if width != self._name_panel_width:
                 self._name_panel_width = width
                 self._welcome_lines = self._render_to_lines(
-                    _build_name_panel(self._name_is_rename), width
+                    build_name_panel(self._name_is_rename), width
                 )
             return _slice(self._welcome_lines)
 
@@ -747,7 +500,7 @@ class HiveApp:
             if trust_key != self._trust_panel_key:
                 self._trust_panel_key = trust_key
                 self._welcome_lines = self._render_to_lines(
-                    _build_trust_panel(
+                    build_trust_panel(
                         self._cwd, width, self._trust_choice, self._lang
                     ),
                     width,
@@ -759,7 +512,7 @@ class HiveApp:
             if lang_key != self._lang_panel_key:
                 self._lang_panel_key = lang_key
                 self._welcome_lines = self._render_to_lines(
-                    _build_language_panel(LANG_OPTIONS, self._lang_idx, width), width
+                    build_language_panel(LANG_OPTIONS, self._lang_idx, width), width
                 )
             return _slice(self._welcome_lines)
 
@@ -768,7 +521,7 @@ class HiveApp:
             if resume_key != self._resume_panel_key:
                 self._resume_panel_key = resume_key
                 self._welcome_lines = self._render_to_lines(
-                    _build_resume_panel(
+                    build_resume_panel(
                         self._resume_sessions, self._resume_idx, width, self._lang
                     ),
                     width,
@@ -779,7 +532,7 @@ class HiveApp:
             self._welcome_width = width
             session_id = self._session.id if self._session else None
             self._welcome_lines = self._render_to_lines(
-                _build_welcome(
+                build_welcome(
                     width, self._cwd, session_id, self._user_name, self._lang
                 ),
                 width,
@@ -800,10 +553,7 @@ class HiveApp:
             save_output(self._session, self._output_lines)
         self._session = session
         self._output_lines = load_output(session)
-        self._history_path = session.history_path
-        self._history = _load_history(self._history_path)
-        self._history_idx = len(self._history)
-        self._history_draft = ""
+        self._history.path = session.history_path
         self._scroll_offset = 0
 
     # -----------------------------------------------------------------------

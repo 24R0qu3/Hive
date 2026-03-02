@@ -1,31 +1,47 @@
-import json
+"""Tests for hive.ui.app — _load_history (via history module) and handle_input."""
+import logging
+from unittest.mock import MagicMock
 
-from hive.ui.app import _load_history
+import pytest
+
+from hive.ui.history import load_history_file
+from hive.workspace import create_workspace, new_session, set_language
+
+
+# ---------------------------------------------------------------------------
+# load_history_file (previously _load_history in app.py)
+# ---------------------------------------------------------------------------
 
 
 def test_returns_empty_when_file_missing(tmp_path):
-    assert _load_history(tmp_path / "history") == []
+    assert load_history_file(tmp_path / "history") == []
 
 
 def test_returns_empty_when_file_is_empty(tmp_path):
+    import json
+
     p = tmp_path / "history"
     p.write_text("", encoding="utf-8")
-    assert _load_history(p) == []
+    assert load_history_file(p) == []
 
 
 def test_loads_json_lines(tmp_path):
+    import json
+
     p = tmp_path / "history"
     p.write_text(
         "\n".join(json.dumps(e) for e in ["hello", "world"]),
         encoding="utf-8",
     )
-    assert _load_history(p) == ["hello", "world"]
+    assert load_history_file(p) == ["hello", "world"]
 
 
 def test_loads_multiline_entry(tmp_path):
+    import json
+
     p = tmp_path / "history"
     p.write_text(json.dumps("line1\nline2"), encoding="utf-8")
-    assert _load_history(p) == ["line1\nline2"]
+    assert load_history_file(p) == ["line1\nline2"]
 
 
 def test_migrates_old_filehistory_format(tmp_path):
@@ -34,28 +50,232 @@ def test_migrates_old_filehistory_format(tmp_path):
         "# 2026-02-27 23:32:21.239492\n+hello\n# 2026-02-27 23:32:21.239492\n+world\n",
         encoding="utf-8",
     )
-    assert _load_history(p) == ["hello", "world"]
+    assert load_history_file(p) == ["hello", "world"]
 
 
 def test_skips_timestamp_lines(tmp_path):
     p = tmp_path / "history"
     p.write_text("# 2026-02-27 23:32:21.239492\n", encoding="utf-8")
-    assert _load_history(p) == []
+    assert load_history_file(p) == []
 
 
 def test_skips_blank_lines(tmp_path):
+    import json
+
     p = tmp_path / "history"
     p.write_text(
         json.dumps("hello") + "\n\n" + json.dumps("world") + "\n",
         encoding="utf-8",
     )
-    assert _load_history(p) == ["hello", "world"]
+    assert load_history_file(p) == ["hello", "world"]
 
 
 def test_mixed_old_and_new_format(tmp_path):
+    import json
+
     p = tmp_path / "history"
     p.write_text(
         "# 2026-02-27 23:32:21.239492\n+old entry\n" + json.dumps("new entry") + "\n",
         encoding="utf-8",
     )
-    assert _load_history(p) == ["old entry", "new entry"]
+    assert load_history_file(p) == ["old entry", "new entry"]
+
+
+# ---------------------------------------------------------------------------
+# handle_input — shared fixture
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def _clean_logger():
+    root = logging.getLogger()
+    original = list(root.handlers)
+    root.handlers.clear()
+    yield
+    for h in root.handlers:
+        h.close()
+    root.handlers.clear()
+    root.handlers.extend(original)
+
+
+@pytest.fixture()
+def hive_app(tmp_path, monkeypatch, _clean_logger):
+    """A HiveApp wired to tmp_path with mocked user state and TUI app."""
+    from prompt_toolkit.output import DummyOutput
+
+    from hive.ui.app import HiveApp
+
+    monkeypatch.setattr("hive.ui.app.get_user_name", lambda: "Test")
+    monkeypatch.setattr("hive.ui.app.has_user_name", lambda: True)
+    create_workspace(tmp_path)
+    set_language(tmp_path, "en")
+    app = HiveApp(tmp_path, trusted=True, _output=DummyOutput())
+    app.app = MagicMock()
+    return app
+
+
+# ---------------------------------------------------------------------------
+# handle_input — /exit
+# ---------------------------------------------------------------------------
+
+
+def test_handle_exit_calls_app_exit(hive_app):
+    hive_app.handle_input("/exit")
+    hive_app.app.exit.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# handle_input — /name
+# ---------------------------------------------------------------------------
+
+
+def test_handle_name_activates_name_dialog(hive_app):
+    hive_app.handle_input("/name")
+    assert hive_app._awaiting_name is True
+    assert hive_app._name_is_rename is True
+
+
+def test_handle_name_invalidates_app(hive_app):
+    hive_app.handle_input("/name")
+    hive_app.app.invalidate.assert_called()
+
+
+# ---------------------------------------------------------------------------
+# handle_input — /language
+# ---------------------------------------------------------------------------
+
+
+def test_handle_language_activates_picker(hive_app):
+    hive_app.handle_input("/language")
+    assert hive_app._picking_language is True
+
+
+def test_handle_language_invalidates_app(hive_app):
+    hive_app.handle_input("/language")
+    hive_app.app.invalidate.assert_called()
+
+
+# ---------------------------------------------------------------------------
+# handle_input — /resume
+# ---------------------------------------------------------------------------
+
+
+def test_handle_resume_activates_picker_when_sessions_exist(hive_app):
+    # trusted=True already created one session in tmp_path
+    hive_app.handle_input("/resume")
+    assert hive_app._resuming is True
+    assert len(hive_app._resume_sessions) >= 1
+
+
+def test_handle_resume_prints_message_when_no_sessions(tmp_path, monkeypatch, _clean_logger):
+    """With a fresh workspace that has no prior sessions, /resume shows a message."""
+    from prompt_toolkit.output import DummyOutput
+
+    from hive.ui.app import HiveApp
+
+    monkeypatch.setattr("hive.ui.app.get_user_name", lambda: "Test")
+    monkeypatch.setattr("hive.ui.app.has_user_name", lambda: True)
+    # Patch list_sessions to always return empty
+    monkeypatch.setattr("hive.ui.app.list_sessions", lambda cwd: [])
+
+    create_workspace(tmp_path)
+    set_language(tmp_path, "en")
+    app = HiveApp(tmp_path, trusted=True, _output=DummyOutput())
+    app.app = MagicMock()
+
+    app.handle_input("/resume")
+    assert app._resuming is False
+    assert any(app._output_lines)
+
+
+# ---------------------------------------------------------------------------
+# handle_input — /sessions
+# ---------------------------------------------------------------------------
+
+
+def test_handle_sessions_outputs_content(hive_app):
+    # There's at least the session created by trusted=True
+    hive_app.handle_input("/sessions")
+    assert any(hive_app._output_lines)
+
+
+def test_handle_sessions_contains_session_id(hive_app):
+    hive_app.handle_input("/sessions")
+    output = "\n".join(hive_app._output_lines)
+    assert hive_app._session.id in output
+
+
+# ---------------------------------------------------------------------------
+# handle_input — /model
+# ---------------------------------------------------------------------------
+
+
+def test_handle_model_no_arg_shows_current_model(hive_app):
+    hive_app.handle_input("/model")
+    output = "\n".join(hive_app._output_lines)
+    assert hive_app._model in output
+
+
+def test_handle_model_set_updates_model_attribute(hive_app):
+    hive_app.handle_input("/model mistral")
+    assert hive_app._model == "mistral"
+
+
+def test_handle_model_set_prints_confirmation(hive_app):
+    hive_app.handle_input("/model mistral")
+    output = "\n".join(hive_app._output_lines)
+    assert "mistral" in output
+
+
+def test_handle_model_trailing_space_shows_current(hive_app):
+    # "/model " with trailing whitespace is treated same as "/model" by split(None,1)
+    hive_app.handle_input("/model ")
+    output = "\n".join(hive_app._output_lines)
+    assert hive_app._model in output
+
+
+# ---------------------------------------------------------------------------
+# handle_input — non-command routes to AI
+# ---------------------------------------------------------------------------
+
+
+def test_handle_non_command_calls_start_ai_response(hive_app, monkeypatch):
+    called = []
+    monkeypatch.setattr(hive_app, "_start_ai_response", lambda text: called.append(text))
+    hive_app.handle_input("hello world")
+    assert called == ["hello world"]
+
+
+def test_handle_non_command_multiple_words(hive_app, monkeypatch):
+    called = []
+    monkeypatch.setattr(hive_app, "_start_ai_response", lambda text: called.append(text))
+    hive_app.handle_input("tell me a joke")
+    assert called == ["tell me a joke"]
+
+
+# ---------------------------------------------------------------------------
+# print
+# ---------------------------------------------------------------------------
+
+
+def test_print_appends_to_output_lines(hive_app):
+    before = len(hive_app._output_lines)
+    hive_app.print("hello")
+    assert len(hive_app._output_lines) > before
+
+
+def test_print_resets_scroll_offset(hive_app):
+    hive_app._scroll_offset = 10
+    hive_app.print("test")
+    assert hive_app._scroll_offset == 0
+
+
+def test_print_renders_rich_table(hive_app):
+    from rich.table import Table
+
+    t = Table()
+    t.add_column("Name")
+    t.add_row("Alice")
+    hive_app.print(t)
+    output = "\n".join(hive_app._output_lines)
+    assert "Alice" in output
