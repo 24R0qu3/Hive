@@ -28,7 +28,7 @@ from hive import ai
 from hive.commands import COMMAND_NAMES, SYSTEM_PROMPT
 from hive.i18n import LANG_OPTIONS, t
 from hive.log import add_session_handler
-from hive.summarizer import RollingSummarizer, SUMMARY_PREFIX
+from hive.summarizer import SUMMARY_PREFIX, RollingSummarizer
 from hive.ui.history import HistoryManager
 from hive.ui.panels import (
     build_language_panel,
@@ -194,8 +194,7 @@ class HiveApp:
             # Migration: seed full history from compact conversation if missing
             if not self._full_conversation and self._conversation:
                 self._full_conversation = [
-                    m for m in self._conversation
-                    if m.get("role") != "system"
+                    m for m in self._conversation if m.get("role") != "system"
                 ]
 
         # --- history ---
@@ -730,11 +729,14 @@ class HiveApp:
             if self._session:
                 save_conversation(self._session, self._conversation)
 
-        self._summarizer.try_summarize_background(current_summary, recent_pairs, on_done)
+        self._summarizer.try_summarize_background(
+            current_summary, recent_pairs, on_done
+        )
 
     def _save_session_sync(self) -> None:
         """Save all session state. Runs a final synchronous summarization if needed."""
         import time as _time
+
         deadline = _time.monotonic() + 10
         while self._summarizer.is_busy and _time.monotonic() < deadline:
             _time.sleep(0.05)
@@ -754,7 +756,11 @@ class HiveApp:
                 pass
 
         last_user = next(
-            (m["content"] for m in reversed(self._full_conversation) if m.get("role") == "user"),
+            (
+                m["content"]
+                for m in reversed(self._full_conversation)
+                if m.get("role") == "user"
+            ),
             "",
         )
         last_message = last_user[:60] + ("\u2026" if len(last_user) > 60 else "")

@@ -1,8 +1,9 @@
 """Tests for hive.summarizer.RollingSummarizer."""
+
 import threading
-import pytest
 from unittest.mock import MagicMock
-from hive.summarizer import RollingSummarizer, SUMMARY_PREFIX
+
+from hive.summarizer import SUMMARY_PREFIX, RollingSummarizer
 
 
 def make_summarizer(token_limit=100, reply="summary text"):
@@ -55,7 +56,9 @@ def test_summarize_sync_omits_summary_when_none():
     s, provider = make_summarizer()
     s.summarize_sync(None, [{"role": "user", "content": "hello"}])
     msgs_passed = provider.chat.call_args[0][0]
-    assert msgs_passed[0]["role"] != "system" or "summary" not in msgs_passed[0].get("content", "")
+    assert msgs_passed[0]["role"] != "system" or "summary" not in msgs_passed[0].get(
+        "content", ""
+    )
 
 
 def test_try_summarize_background_calls_on_done():
@@ -79,7 +82,9 @@ def test_try_summarize_background_skips_when_busy():
     s._busy.set()  # simulate in-progress
     called = []
     s.try_summarize_background(None, [], lambda c: called.append(c))
-    import time; time.sleep(0.1)
+    import time
+
+    time.sleep(0.1)
     assert called == []
     s._busy.clear()
 

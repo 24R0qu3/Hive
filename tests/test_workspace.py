@@ -513,7 +513,10 @@ def test_session_full_conversation_path_property(tmp_path):
 
 def test_save_and_load_full_conversation_roundtrip(tmp_path):
     session = new_session(tmp_path)
-    messages = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]
+    messages = [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "hello"},
+    ]
     save_full_conversation(session, messages)
     assert load_full_conversation(session) == messages
 

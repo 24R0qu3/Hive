@@ -211,7 +211,9 @@ DEFAULT_SUMMARIZATION_TOKEN_LIMIT: int = 1500
 
 def get_summarization_token_limit(cwd: Path) -> int:
     """Return the configured rolling summarization token limit."""
-    value = get_config(cwd).get("summarization_token_limit", DEFAULT_SUMMARIZATION_TOKEN_LIMIT)
+    value = get_config(cwd).get(
+        "summarization_token_limit", DEFAULT_SUMMARIZATION_TOKEN_LIMIT
+    )
     return int(value)
 
 
