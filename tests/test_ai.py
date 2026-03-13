@@ -85,8 +85,9 @@ def _fake_response(content: str):
 def test_chat_returns_assistant_content():
     provider = OllamaProvider()
     with patch("urllib.request.urlopen", return_value=_fake_response("Hello!")):
-        result = provider.chat([{"role": "user", "content": "hi"}], "llama3.2")
+        result, tools_unsupported = provider.chat([{"role": "user", "content": "hi"}], "llama3.2")
     assert result == "Hello!"
+    assert tools_unsupported is False
 
 
 def test_chat_sends_correct_model():
@@ -218,9 +219,10 @@ def test_chat_tool_call_loop_executes_tool_and_returns_final_reply():
         return "result"
 
     with patch("urllib.request.urlopen", side_effect=fake_urlopen):
-        result = provider.chat([], "mistral", tools=[], tool_executor=executor)
+        result, tools_unsupported = provider.chat([], "mistral", tools=[], tool_executor=executor)
 
     assert result == "Here are the commands."
+    assert tools_unsupported is False
     assert calls == [("list_commands", {})]
 
 
@@ -279,7 +281,7 @@ def test_chat_falls_back_silently_on_tools_not_supported():
         return _fake_response("fallback reply")
 
     with patch("urllib.request.urlopen", side_effect=fake_urlopen):
-        result = provider.chat(
+        result, tools_unsupported = provider.chat(
             [],
             "mistral",
             tools=[{"type": "function", "function": {"name": "x", "parameters": {}}}],
@@ -287,4 +289,5 @@ def test_chat_falls_back_silently_on_tools_not_supported():
         )
 
     assert result == "fallback reply"
+    assert tools_unsupported is True
     assert call_count[0] == 2  # first with tools (failed), second without

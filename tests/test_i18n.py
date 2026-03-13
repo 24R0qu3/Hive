@@ -154,8 +154,48 @@ def test_exit_resume_formats_correctly():
         "sessions.none",
         "sessions.none_resume",
         "exit.resume",
+        "mcp.tools_unsupported",
+        "mcp.manage.heading",
+        "mcp.manage.hint",
+        "mcp.manage.status.connected",
+        "mcp.manage.status.disconnected",
+        "mcp.manage.status.reconnecting",
+        "mcp.manage.confirm_delete",
+        "mcp.manage.add.prompt_name",
+        "mcp.manage.add.prompt_command",
+        "mcp.manage.add.prompt_args",
+        "mcp.manage.add.prompt_env",
+        "mcp.manage.deleted",
+        "mcp.manage.enabled",
+        "mcp.manage.disabled",
+        "mcp.manage.reconnecting",
     ],
 )
 def test_all_english_keys_resolve_to_non_key(key):
     result = t(key, "en")
     assert result != key, f"Key '{key}' was not found in English strings"
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "mcp.tools_unsupported",
+        "mcp.manage.heading",
+        "mcp.manage.hint",
+        "mcp.manage.status.connected",
+        "mcp.manage.status.disconnected",
+        "mcp.manage.status.reconnecting",
+        "mcp.manage.confirm_delete",
+        "mcp.manage.add.prompt_name",
+        "mcp.manage.add.prompt_command",
+        "mcp.manage.add.prompt_args",
+        "mcp.manage.add.prompt_env",
+        "mcp.manage.deleted",
+        "mcp.manage.enabled",
+        "mcp.manage.disabled",
+        "mcp.manage.reconnecting",
+    ],
+)
+def test_mcp_manage_keys_exist_in_german(key):
+    result = t(key, "de")
+    assert result != key, f"Key '{key}' was not found in German strings"

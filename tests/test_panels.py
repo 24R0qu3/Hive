@@ -8,6 +8,7 @@ from rich.panel import Panel
 from hive.i18n import LANG_OPTIONS
 from hive.ui.panels import (
     build_language_panel,
+    build_mcp_panel,
     build_name_panel,
     build_resume_panel,
     build_trust_panel,
@@ -290,3 +291,76 @@ def test_build_resume_panel_shows_last_message(tmp_path):
     text = _panel_text(panel)
     # The fake session has last_message = "test message"
     assert "test message" in text
+
+
+# ---------------------------------------------------------------------------
+# build_mcp_panel
+# ---------------------------------------------------------------------------
+
+
+def test_build_mcp_panel_returns_panel():
+    # with empty configs list, should still return a Panel
+    from hive.mcp import MCPServerConfig
+
+    panel = build_mcp_panel([], set(), set(), 0)
+    assert isinstance(panel, Panel)
+
+
+def test_build_mcp_panel_shows_server_name():
+    from hive.mcp import MCPServerConfig
+
+    configs = [MCPServerConfig(name="myserver", command="cmd")]
+    output = _render(build_mcp_panel(configs, {"myserver"}, set(), 0))
+    assert "myserver" in output
+
+
+def test_build_mcp_panel_connected_status():
+    from hive.mcp import MCPServerConfig
+
+    configs = [MCPServerConfig(name="s1", command="cmd")]
+    output = _render(build_mcp_panel(configs, {"s1"}, set(), 0))
+    assert "✓" in output
+
+
+def test_build_mcp_panel_disconnected_status():
+    from hive.mcp import MCPServerConfig
+
+    configs = [MCPServerConfig(name="s1", command="cmd")]
+    output = _render(build_mcp_panel(configs, set(), set(), 0))
+    assert "✗" in output
+
+
+def test_build_mcp_panel_reconnecting_status():
+    from hive.mcp import MCPServerConfig
+
+    configs = [MCPServerConfig(name="s1", command="cmd")]
+    output = _render(build_mcp_panel(configs, set(), {"s1"}, 0))
+    assert "reconnecting" in output.lower() or "…" in output
+
+
+def test_build_mcp_panel_selected_row_shows_arrow():
+    from hive.mcp import MCPServerConfig
+
+    configs = [
+        MCPServerConfig(name="a", command="cmd"),
+        MCPServerConfig(name="b", command="cmd"),
+    ]
+    output = _render(build_mcp_panel(configs, set(), set(), 0))
+    assert "▶" in output
+
+
+def test_build_mcp_panel_confirm_delete_shown():
+    from hive.mcp import MCPServerConfig
+
+    configs = [MCPServerConfig(name="srv", command="cmd")]
+    output = _render(build_mcp_panel(configs, set(), set(), 0, confirm_delete_name="srv"))
+    assert "srv" in output
+    # confirm message should appear
+    assert "Delete" in output or "delete" in output.lower()
+
+
+def test_build_mcp_panel_hint_contains_esc():
+    from hive.mcp import MCPServerConfig
+
+    output = _render(build_mcp_panel([], set(), set(), 0))
+    assert "Esc" in output

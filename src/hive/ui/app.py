@@ -31,6 +31,7 @@ from hive.summarizer import SUMMARY_PREFIX, RollingSummarizer
 from hive.ui.history import HistoryManager
 from hive.ui.panels import (
     build_language_panel,
+    build_mcp_panel,
     build_model_panel,
     build_name_panel,
     build_resume_panel,
@@ -54,6 +55,7 @@ from hive.workspace import (
     new_session,
     save_conversation,
     save_full_conversation,
+    save_mcp_configs,
     save_output,
     set_language,
     set_model,
@@ -210,6 +212,20 @@ class HiveApp:
         # --- MCP state ---
         self._mcp = MCPManager()
 
+        # MCP management panel state
+        self._managing_mcp: bool = False
+        self._mcp_configs: list[MCPServerConfig] = []
+        self._mcp_idx: int = 0
+        self._mcp_panel_key: tuple = (-1, -1)
+        self._mcp_confirm_delete: str | None = None
+        self._mcp_reconnecting: set[str] = set()
+        self._mcp_tools_unsupported_shown: bool = False
+
+        # MCP add-server wizard state
+        self._mcp_adding: bool = False
+        self._mcp_add_step: int = 0  # 0=name, 1=command, 2=args, 3=env
+        self._mcp_add_data: dict = {}
+
         # --- output state ---
         self._welcome_lines: list[str] = []
         self._welcome_width: int = -1
@@ -297,6 +313,7 @@ class HiveApp:
                 or self._picking_language
                 or self._resuming
                 or self._picking_model
+                or self._managing_mcp
             )
         )
         # Blocks history nav (but not name — user is typing freely there)
@@ -306,6 +323,7 @@ class HiveApp:
                 or self._picking_language
                 or self._picking_model
                 or self._awaiting_name
+                or self._managing_mcp
             )
         )
 
@@ -457,6 +475,157 @@ class HiveApp:
         def model_cancel(event):
             self._picking_model = False
             self._welcome_width = -1
+            event.app.invalidate()
+
+        # -- MCP management panel --
+        _mcp_active = Condition(lambda: self._managing_mcp and not self._mcp_adding)
+        _mcp_adding_active = Condition(lambda: self._managing_mcp and self._mcp_adding)
+
+        @kb.add("up", filter=_mcp_active, eager=True)
+        def mcp_up(event):
+            self._mcp_idx = max(0, self._mcp_idx - 1)
+            self._mcp_panel_key = (-1, -1)
+            event.app.invalidate()
+
+        @kb.add("down", filter=_mcp_active, eager=True)
+        def mcp_down(event):
+            self._mcp_idx = min(len(self._mcp_configs) - 1, self._mcp_idx + 1)
+            self._mcp_panel_key = (-1, -1)
+            event.app.invalidate()
+
+        @kb.add("enter", filter=_mcp_active, eager=True)
+        def mcp_toggle(event):
+            if not self._mcp_configs:
+                return
+            config = self._mcp_configs[self._mcp_idx]
+            config.enabled = not config.enabled
+            save_mcp_configs(self._cwd, [c.to_dict() for c in self._mcp_configs])
+            if config.enabled:
+                threading.Thread(
+                    target=self._connect_mcp_server, args=(config,), daemon=True
+                ).start()
+                self.print(t("mcp.manage.enabled", self._lang).format(name=config.name))
+            else:
+                threading.Thread(
+                    target=lambda: self._mcp.disconnect(config.name), daemon=True
+                ).start()
+                self.print(t("mcp.manage.disabled", self._lang).format(name=config.name))
+            self._mcp_panel_key = (-1, -1)
+            event.app.invalidate()
+
+        @kb.add("r", filter=_mcp_active, eager=True)
+        @kb.add("R", filter=_mcp_active, eager=True)
+        def mcp_reconnect_selected(event):
+            if not self._mcp_configs:
+                return
+            name = self._mcp_configs[self._mcp_idx].name
+            self._mcp_reconnecting.add(name)
+            self._mcp_panel_key = (-1, -1)
+            self.print(t("mcp.manage.reconnecting", self._lang).format(name=name))
+
+            def _do_reconnect():
+                try:
+                    self._mcp.reconnect(name)
+                except Exception as exc:
+                    logger.error("Manual MCP reconnect failed for '%s': %s", name, exc)
+                finally:
+                    self._mcp_reconnecting.discard(name)
+                    self._mcp_panel_key = (-1, -1)
+                    if self.app.is_running:
+                        self.app.invalidate()
+
+            threading.Thread(target=_do_reconnect, daemon=True).start()
+            event.app.invalidate()
+
+        @kb.add("d", filter=_mcp_active, eager=True)
+        @kb.add("D", filter=_mcp_active, eager=True)
+        def mcp_delete_or_confirm(event):
+            if not self._mcp_configs:
+                return
+            name = self._mcp_configs[self._mcp_idx].name
+            if self._mcp_confirm_delete != name:
+                self._mcp_confirm_delete = name
+                self._mcp_panel_key = (-1, -1)
+                event.app.invalidate()
+                return
+            # Confirmed — delete
+            threading.Thread(
+                target=lambda: self._mcp.disconnect(name), daemon=True
+            ).start()
+            self._mcp_configs = [c for c in self._mcp_configs if c.name != name]
+            save_mcp_configs(self._cwd, [c.to_dict() for c in self._mcp_configs])
+            self._mcp_idx = min(self._mcp_idx, max(0, len(self._mcp_configs) - 1))
+            self._mcp_confirm_delete = None
+            self._mcp_panel_key = (-1, -1)
+            self.print(t("mcp.manage.deleted", self._lang).format(name=name))
+            event.app.invalidate()
+
+        @kb.add("escape", filter=_mcp_active, eager=True)
+        def mcp_manage_escape(event):
+            if self._mcp_confirm_delete is not None:
+                self._mcp_confirm_delete = None
+                self._mcp_panel_key = (-1, -1)
+                event.app.invalidate()
+                return
+            self._managing_mcp = False
+            self._welcome_width = -1
+            event.app.invalidate()
+
+        @kb.add("a", filter=_mcp_active, eager=True)
+        @kb.add("A", filter=_mcp_active, eager=True)
+        def mcp_add_start(event):
+            self._mcp_adding = True
+            self._mcp_add_step = 0
+            self._mcp_add_data = {}
+            self.input_field.text = ""
+            self.print(t("mcp.manage.add.prompt_name", self._lang))
+            event.app.invalidate()
+
+        @kb.add("enter", filter=has_focus(self.input_field) & _mcp_adding_active, eager=True)
+        def mcp_add_step_submit(event):
+            text = self.input_field.text.strip()
+            step_keys = ["name", "command", "args", "env"]
+            prompts = [
+                "mcp.manage.add.prompt_name",
+                "mcp.manage.add.prompt_command",
+                "mcp.manage.add.prompt_args",
+                "mcp.manage.add.prompt_env",
+            ]
+            self._mcp_add_data[step_keys[self._mcp_add_step]] = text
+            self.input_field.text = ""
+            self._mcp_add_step += 1
+            if self._mcp_add_step < len(step_keys):
+                self.print(t(prompts[self._mcp_add_step], self._lang))
+                event.app.invalidate()
+                return
+            # All steps done — build config
+            raw_args = self._mcp_add_data.get("args", "").split() if self._mcp_add_data.get("args") else []
+            raw_env: dict[str, str] = {}
+            for pair in (self._mcp_add_data.get("env", "") or "").split():
+                if "=" in pair:
+                    k, v = pair.split("=", 1)
+                    raw_env[k] = v
+            new_config = MCPServerConfig(
+                name=self._mcp_add_data["name"],
+                command=self._mcp_add_data["command"],
+                args=raw_args,
+                env=raw_env,
+            )
+            self._mcp_configs.append(new_config)
+            save_mcp_configs(self._cwd, [c.to_dict() for c in self._mcp_configs])
+            threading.Thread(
+                target=self._connect_mcp_server, args=(new_config,), daemon=True
+            ).start()
+            self._mcp_adding = False
+            self._mcp_panel_key = (-1, -1)
+            event.app.invalidate()
+
+        @kb.add("escape", filter=has_focus(self.input_field) & _mcp_adding_active, eager=True)
+        def mcp_add_cancel(event):
+            self._mcp_adding = False
+            self._mcp_add_step = 0
+            self._mcp_add_data = {}
+            self.input_field.text = ""
             event.app.invalidate()
 
         # -- Inline hint navigation + Tab to accept --
@@ -809,6 +978,29 @@ class HiveApp:
                 )
             return _slice(self._welcome_lines)
 
+        if self._managing_mcp:
+            mcp_key = (
+                width,
+                self._mcp_idx,
+                self._mcp_confirm_delete,
+                frozenset(self._mcp_reconnecting),
+                frozenset(self._mcp.servers().keys()),
+            )
+            if mcp_key != self._mcp_panel_key:
+                self._mcp_panel_key = mcp_key
+                self._welcome_lines = self._render_to_lines(
+                    build_mcp_panel(
+                        self._mcp_configs,
+                        set(self._mcp.servers().keys()),
+                        self._mcp_reconnecting,
+                        self._mcp_idx,
+                        self._mcp_confirm_delete,
+                        self._lang,
+                    ),
+                    width,
+                )
+            return _slice(self._welcome_lines)
+
         if width != self._welcome_width:
             self._welcome_width = width
             session_id = self._session.id if self._session else None
@@ -1006,7 +1198,22 @@ class HiveApp:
             self.print(table)
             return
 
-        if text == "/mcp":
+        if text == "/mcp" or text.startswith("/mcp "):
+            parts = text.split(None, 1)
+            sub = parts[1].strip() if len(parts) > 1 else ""
+            if sub == "manage":
+                self._mcp_configs = [
+                    MCPServerConfig.from_dict(d) for d in get_mcp_configs(self._cwd)
+                ]
+                self._mcp_idx = 0
+                self._mcp_panel_key = (-1, -1)
+                self._mcp_confirm_delete = None
+                self._managing_mcp = True
+                self._welcome_width = -1
+                if self.app.is_running:
+                    self.app.invalidate()
+                return
+            # Default: show table of connected servers
             servers = self._mcp.servers()
             if not servers:
                 self.print(t("mcp.none", self._lang))
@@ -1069,6 +1276,7 @@ class HiveApp:
         done = threading.Event()
         result: list[str | None] = [None]
         error: list[str | None] = [None]
+        tools_unsupported_flag: list[bool] = [False]
         width = self._current_width()
 
         mcp_tools = self._mcp.list_tools()
@@ -1081,12 +1289,14 @@ class HiveApp:
 
         def _ai_thread() -> None:
             try:
-                result[0] = self._provider.chat(
+                reply, tools_unsupported = self._provider.chat(
                     [{"role": "system", "content": SYSTEM_PROMPT}] + self._conversation,
                     self._model,
                     tools=all_tools,
                     tool_executor=_tool_executor,
                 )
+                result[0] = reply
+                tools_unsupported_flag[0] = tools_unsupported
             except Exception as exc:
                 error[0] = str(exc)
             finally:
@@ -1119,6 +1329,13 @@ class HiveApp:
                 self._maybe_summarize()
                 reply_lines = self._render_to_lines(reply, width=width)
                 self._output_lines[thinking_idx : thinking_idx + 1] = reply_lines
+                if tools_unsupported_flag[0] and not self._mcp_tools_unsupported_shown:
+                    self._mcp_tools_unsupported_shown = True
+                    self._output_lines.extend(
+                        self._render_to_lines(
+                            f"[dim]{t('mcp.tools_unsupported', self._lang)}[/dim]"
+                        )
+                    )
 
             self._scroll_offset = 0
             if self.app.is_running:
@@ -1150,6 +1367,7 @@ class HiveApp:
         try:
             self.app.run()
         finally:
+            self._mcp.shutdown()
             if self._session:
                 self._save_session_sync()
                 print(t("exit.resume", self._lang).format(id=self._session.id))
