@@ -4,20 +4,25 @@ import logging
 import pytest
 
 from hive.workspace import (
+    DEFAULT_RESUME_TOKEN_LIMIT,
     create_workspace,
     get_config,
     get_language,
     get_model,
+    get_resume_token_limit,
     get_session,
     has_language,
     is_trusted,
     list_sessions,
+    load_conversation,
     load_output,
     new_session,
     save_config,
+    save_conversation,
     save_output,
     set_language,
     set_model,
+    set_resume_token_limit,
 )
 
 # ---------------------------------------------------------------------------
@@ -116,6 +121,12 @@ def test_session_output_path(tmp_path):
     create_workspace(tmp_path)
     session = new_session(tmp_path)
     assert session.output_path == session.path / "output"
+
+
+def test_session_conversation_path(tmp_path):
+    create_workspace(tmp_path)
+    session = new_session(tmp_path)
+    assert session.conversation_path == session.path / "conversation.json"
 
 
 def test_session_log_path(tmp_path):
@@ -417,3 +428,115 @@ def test_set_model_preserves_other_config_keys(tmp_path):
     set_model(tmp_path, "llama3.2")
     assert get_config(tmp_path)["language"] == "en"
     assert get_config(tmp_path)["model"] == "llama3.2"
+
+
+# ---------------------------------------------------------------------------
+# save_conversation / load_conversation
+# ---------------------------------------------------------------------------
+
+
+def test_session_conversation_path_property(tmp_path):
+    create_workspace(tmp_path)
+    session = new_session(tmp_path)
+    assert session.conversation_path == session.path / "conversation.json"
+
+
+def test_save_and_load_conversation_roundtrip(tmp_path):
+    create_workspace(tmp_path)
+    session = new_session(tmp_path)
+    conversation = [
+        {"role": "user", "content": "Hello"},
+        {"role": "assistant", "content": "Hi there!"},
+    ]
+    save_conversation(session, conversation)
+    assert load_conversation(session) == conversation
+
+
+def test_load_conversation_empty_when_no_file(tmp_path):
+    create_workspace(tmp_path)
+    session = new_session(tmp_path)
+    assert load_conversation(session) == []
+
+
+def test_save_conversation_creates_file(tmp_path):
+    create_workspace(tmp_path)
+    session = new_session(tmp_path)
+    save_conversation(session, [{"role": "user", "content": "test"}])
+    assert session.conversation_path.exists()
+
+
+def test_load_conversation_empty_on_malformed_json(tmp_path):
+    create_workspace(tmp_path)
+    session = new_session(tmp_path)
+    session.conversation_path.write_text("not valid json", encoding="utf-8")
+    assert load_conversation(session) == []
+
+
+def test_load_conversation_empty_when_not_a_list(tmp_path):
+    """A JSON object (not an array) should be treated as malformed."""
+    create_workspace(tmp_path)
+    session = new_session(tmp_path)
+    session.conversation_path.write_text('{"role": "user"}', encoding="utf-8")
+    assert load_conversation(session) == []
+
+
+def test_save_conversation_preserves_unicode(tmp_path):
+    create_workspace(tmp_path)
+    session = new_session(tmp_path)
+    msgs = [{"role": "user", "content": "Héllo wörld 🐝"}]
+    save_conversation(session, msgs)
+    assert load_conversation(session) == msgs
+
+
+def test_save_conversation_overwrites_previous(tmp_path):
+    create_workspace(tmp_path)
+    session = new_session(tmp_path)
+    save_conversation(session, [{"role": "user", "content": "first"}])
+    save_conversation(session, [{"role": "user", "content": "second"}])
+    result = load_conversation(session)
+    assert len(result) == 1
+    assert result[0]["content"] == "second"
+
+
+# ---------------------------------------------------------------------------
+# get_resume_token_limit / set_resume_token_limit
+# ---------------------------------------------------------------------------
+
+
+def test_get_resume_token_limit_default(tmp_path):
+    """Returns DEFAULT_RESUME_TOKEN_LIMIT when no config key is present."""
+    create_workspace(tmp_path)
+    assert get_resume_token_limit(tmp_path) == DEFAULT_RESUME_TOKEN_LIMIT
+
+
+def test_get_resume_token_limit_no_workspace(tmp_path):
+    """Falls back to the default even without a .hive directory."""
+    assert get_resume_token_limit(tmp_path) == DEFAULT_RESUME_TOKEN_LIMIT
+
+
+def test_set_and_get_resume_token_limit(tmp_path):
+    create_workspace(tmp_path)
+    set_resume_token_limit(tmp_path, 4000)
+    assert get_resume_token_limit(tmp_path) == 4000
+
+
+def test_set_resume_token_limit_unlimited(tmp_path):
+    """None means unlimited — stored as JSON null and read back as None."""
+    create_workspace(tmp_path)
+    set_resume_token_limit(tmp_path, None)
+    assert get_resume_token_limit(tmp_path) is None
+
+
+def test_set_resume_token_limit_overwrites(tmp_path):
+    create_workspace(tmp_path)
+    set_resume_token_limit(tmp_path, 500)
+    set_resume_token_limit(tmp_path, 1000)
+    assert get_resume_token_limit(tmp_path) == 1000
+
+
+def test_set_resume_token_limit_preserves_other_config(tmp_path):
+    create_workspace(tmp_path)
+    save_config(tmp_path, {"language": "de"})
+    set_resume_token_limit(tmp_path, 2000)
+    assert get_config(tmp_path)["language"] == "de"
+    assert get_config(tmp_path)["resume_token_limit"] == 2000

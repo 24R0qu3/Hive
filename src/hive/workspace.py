@@ -22,6 +22,11 @@ class Session:
         return self.path / "output"
 
     @property
+    def conversation_path(self) -> Path:
+        """AI conversation history saved on exit for context restoration on resume."""
+        return self.path / "conversation.json"
+
+    @property
     def log_path(self) -> Path:
         return self.path / "hive.log"
 
@@ -126,6 +131,68 @@ def set_model(cwd: Path, model: str) -> None:
     """Persist the AI model choice to .hive/config.json."""
     config = get_config(cwd)
     config["model"] = model
+    save_config(cwd, config)
+
+
+def save_conversation(session: Session, conversation: list[dict]) -> None:
+    """Write the AI conversation history to the session folder as JSON.
+
+    The conversation list contains the raw role/content dicts that were sent
+    to the AI provider (excluding the top-level system prompt, which is always
+    rebuilt from SYSTEM_PROMPT at runtime).  Saving it enables context
+    restoration when the session is resumed later.
+    """
+    session.conversation_path.write_text(
+        json.dumps(conversation, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def load_conversation(session: Session) -> list[dict]:
+    """Load the AI conversation history from the session folder.
+
+    Returns an empty list when the file does not exist or is malformed, so
+    callers can always treat the result as a (possibly empty) message list.
+    """
+    if not session.conversation_path.exists():
+        return []
+    try:
+        data = json.loads(session.conversation_path.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            return data
+    except (json.JSONDecodeError, OSError):
+        pass
+    return []
+
+
+# ---------------------------------------------------------------------------
+# Resume token-limit config
+# ---------------------------------------------------------------------------
+
+#: Default maximum token count for raw conversation replay on resume.
+#: Conversations over this limit are summarised by the AI instead.
+DEFAULT_RESUME_TOKEN_LIMIT: int = 2000
+
+
+def get_resume_token_limit(cwd: Path) -> "int | None":
+    """Return the configured resume token limit for *cwd*.
+
+    Returns ``None`` when the limit is set to *unlimited* (the full
+    conversation is always replayed verbatim).  Falls back to
+    ``DEFAULT_RESUME_TOKEN_LIMIT`` when the key is not present in config.
+    """
+    value = get_config(cwd).get("resume_token_limit", DEFAULT_RESUME_TOKEN_LIMIT)
+    # None is stored as JSON null to signal "unlimited".
+    return None if value is None else int(value)
+
+
+def set_resume_token_limit(cwd: Path, limit: "int | None") -> None:
+    """Persist the resume token limit to ``.hive/config.json``.
+
+    Pass ``None`` to set *unlimited* (stored as JSON null).
+    """
+    config = get_config(cwd)
+    config["resume_token_limit"] = limit
     save_config(cwd, config)
 
 

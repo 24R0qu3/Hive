@@ -11,7 +11,7 @@ from rich.text import Text
 
 from hive import __version__
 from hive.i18n import t
-from hive.workspace import Session
+from hive.workspace import DEFAULT_RESUME_TOKEN_LIMIT, Session
 
 _WIDE_THRESHOLD = 80
 
@@ -194,9 +194,26 @@ def build_language_panel(lang_options: list, idx: int, width: int = 0) -> Panel:
 
 
 def build_resume_panel(
-    sessions: list[Session], idx: int, width: int = 0, lang: str = "en"
+    sessions: list[Session],
+    idx: int,
+    width: int = 0,
+    lang: str = "en",
+    token_limit: "int | None" = DEFAULT_RESUME_TOKEN_LIMIT,
+    setting_limit: bool = False,
 ) -> Panel:
-    """Session resume picker panel."""
+    """Session resume picker panel.
+
+    Below the session list a *context limit* line shows the current token
+    threshold used when restoring AI conversation context on resume:
+
+    - Numbers come from ``get_resume_token_limit`` (stored in config.json).
+    - ``None`` means *unlimited* — the full conversation is always replayed.
+    - ``[L]`` cycles through presets; the last preset activates a custom-input
+      prompt that redirects the input field to accept an arbitrary number.
+
+    When *setting_limit* is ``True`` the limit line shows a blinking cursor
+    to indicate that the user should type a number into the input field.
+    """
     rows = []
     for i, s in enumerate(sessions):
         selected = i == idx
@@ -204,13 +221,35 @@ def build_resume_panel(
         style = "bold #FFC107" if selected else ""
         rows.append(Text(f"{prefix}{s.id}  {s.started}", style=style))
 
+    # Build the context-limit display line.
+    if setting_limit:
+        # Custom-input mode: cursor indicates the input field is active.
+        limit_line = Text.assemble(
+            ("  ", ""),
+            (t("resume.limit", lang).format(limit="Custom"), "dim"),
+            ("  ▌", "#FFC107"),
+        )
+        hint_text = t("resume.limit_custom_hint", lang)
+    else:
+        if token_limit is None:
+            limit_str = t("resume.limit_unlimited", lang)
+        else:
+            limit_str = f"{token_limit:,}"
+        limit_line = Text(
+            f"  {t('resume.limit', lang).format(limit=limit_str)}  [L]",
+            style="dim",
+        )
+        hint_text = t("resume.hint", lang)
+
     content = Group(
         Text(""),
         Text(t("resume.heading", lang), justify="center"),
         Text(""),
         *rows,
         Text(""),
-        Text(t("resume.hint", lang), style="dim", justify="center"),
+        limit_line,
+        Text(""),
+        Text(hint_text, style="dim", justify="center"),
         Text(""),
     )
     return Panel(

@@ -25,7 +25,15 @@ _STRINGS: dict[str, dict[str, str]] = {
         "welcome.hint": "Enter · Shift+Enter newline · Shift+drag to select · Ctrl+C ×2 exit",
         # resume picker
         "resume.heading": "Choose a session to resume:",
-        "resume.hint": "↑ ↓ to navigate · Enter to resume · Esc to cancel",
+        "resume.hint": "↑ ↓ navigate · Enter resume · L cycle limit · Esc cancel",
+        "resume.limit": "Context limit: {limit}",
+        "resume.limit_unlimited": "Unlimited",
+        "resume.limit_custom_hint": "Type token limit and press Enter · Esc cancel",
+        # context restore notices (appended to output after resume)
+        "context.loading": "Restoring context\u2026",
+        "context.restored": "Context restored \u2014 {n} messages",
+        "context.summarized": "Context summarized from previous session",
+        "context.partial": "Context partially restored \u2014 last {n} messages",
         # sessions
         "sessions.title": "Sessions",
         "sessions.col.id": "ID",
@@ -58,7 +66,15 @@ _STRINGS: dict[str, dict[str, str]] = {
         "welcome.hint": "Enter · Shift+Enter neue Zeile · Shift+Ziehen · Ctrl+C ×2 beenden",
         # resume picker
         "resume.heading": "Sitzung zum Fortsetzen auswählen:",
-        "resume.hint": "↑ ↓ navigieren · Enter fortsetzen · Esc abbrechen",
+        "resume.hint": "↑ ↓ navigieren · Enter fortsetzen · L Limit · Esc abbrechen",
+        "resume.limit": "Kontextlimit: {limit}",
+        "resume.limit_unlimited": "Unbegrenzt",
+        "resume.limit_custom_hint": "Tokenlimit eingeben und Enter drücken · Esc abbrechen",
+        # context restore notices
+        "context.loading": "Kontext wird wiederhergestellt\u2026",
+        "context.restored": "Kontext wiederhergestellt \u2014 {n} Nachrichten",
+        "context.summarized": "Kontext aus vorheriger Sitzung zusammengefasst",
+        "context.partial": "Kontext teilweise wiederhergestellt \u2014 letzte {n} Nachrichten",
         # sessions
         "sessions.title": "Sitzungen",
         "sessions.col.id": "ID",
