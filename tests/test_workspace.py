@@ -4,25 +4,28 @@ import logging
 import pytest
 
 from hive.workspace import (
-    DEFAULT_RESUME_TOKEN_LIMIT,
+    DEFAULT_SUMMARIZATION_TOKEN_LIMIT,
     create_workspace,
     get_config,
     get_language,
     get_model,
-    get_resume_token_limit,
     get_session,
+    get_summarization_token_limit,
     has_language,
     is_trusted,
     list_sessions,
     load_conversation,
+    load_full_conversation,
     load_output,
     new_session,
     save_config,
     save_conversation,
+    save_full_conversation,
     save_output,
     set_language,
     set_model,
-    set_resume_token_limit,
+    set_summarization_token_limit,
+    update_meta,
 )
 
 # ---------------------------------------------------------------------------
@@ -499,44 +502,74 @@ def test_save_conversation_overwrites_previous(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# get_resume_token_limit / set_resume_token_limit
+# full_conversation
 # ---------------------------------------------------------------------------
 
 
-def test_get_resume_token_limit_default(tmp_path):
-    """Returns DEFAULT_RESUME_TOKEN_LIMIT when no config key is present."""
+def test_session_full_conversation_path_property(tmp_path):
+    session = new_session(tmp_path)
+    assert session.full_conversation_path == session.path / "full_conversation.json"
+
+
+def test_save_and_load_full_conversation_roundtrip(tmp_path):
+    session = new_session(tmp_path)
+    messages = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]
+    save_full_conversation(session, messages)
+    assert load_full_conversation(session) == messages
+
+
+def test_load_full_conversation_returns_empty_when_no_file(tmp_path):
+    session = new_session(tmp_path)
+    assert load_full_conversation(session) == []
+
+
+def test_load_full_conversation_returns_empty_on_malformed_json(tmp_path):
+    session = new_session(tmp_path)
+    session.full_conversation_path.write_text("not json", encoding="utf-8")
+    assert load_full_conversation(session) == []
+
+
+# ---------------------------------------------------------------------------
+# new_session meta fields / update_meta
+# ---------------------------------------------------------------------------
+
+
+def test_new_session_meta_has_ended_at_and_last_message(tmp_path):
+    session = new_session(tmp_path)
+    assert "ended_at" in session.meta
+    assert session.meta["ended_at"] is None
+    assert session.meta["last_message"] == ""
+
+
+def test_update_meta_writes_fields(tmp_path):
+    session = new_session(tmp_path)
+    update_meta(session, "2026-01-01T12:00:00", "hello world")
+    # reload meta
+    meta = json.loads((session.path / "meta.json").read_text(encoding="utf-8"))
+    assert meta["ended_at"] == "2026-01-01T12:00:00"
+    assert meta["last_message"] == "hello world"
+
+
+def test_update_meta_preserves_other_fields(tmp_path):
+    session = new_session(tmp_path)
+    original_id = session.id
+    original_started = session.meta["started"]
+    update_meta(session, "2026-01-01T12:00:00", "msg")
+    meta = json.loads((session.path / "meta.json").read_text(encoding="utf-8"))
+    assert meta["id"] == original_id
+    assert meta["started"] == original_started
+
+
+# ---------------------------------------------------------------------------
+# get_summarization_token_limit / set_summarization_token_limit
+# ---------------------------------------------------------------------------
+
+
+def test_get_summarization_token_limit_default(tmp_path):
+    assert get_summarization_token_limit(tmp_path) == DEFAULT_SUMMARIZATION_TOKEN_LIMIT
+
+
+def test_set_and_get_summarization_token_limit(tmp_path):
     create_workspace(tmp_path)
-    assert get_resume_token_limit(tmp_path) == DEFAULT_RESUME_TOKEN_LIMIT
-
-
-def test_get_resume_token_limit_no_workspace(tmp_path):
-    """Falls back to the default even without a .hive directory."""
-    assert get_resume_token_limit(tmp_path) == DEFAULT_RESUME_TOKEN_LIMIT
-
-
-def test_set_and_get_resume_token_limit(tmp_path):
-    create_workspace(tmp_path)
-    set_resume_token_limit(tmp_path, 4000)
-    assert get_resume_token_limit(tmp_path) == 4000
-
-
-def test_set_resume_token_limit_unlimited(tmp_path):
-    """None means unlimited — stored as JSON null and read back as None."""
-    create_workspace(tmp_path)
-    set_resume_token_limit(tmp_path, None)
-    assert get_resume_token_limit(tmp_path) is None
-
-
-def test_set_resume_token_limit_overwrites(tmp_path):
-    create_workspace(tmp_path)
-    set_resume_token_limit(tmp_path, 500)
-    set_resume_token_limit(tmp_path, 1000)
-    assert get_resume_token_limit(tmp_path) == 1000
-
-
-def test_set_resume_token_limit_preserves_other_config(tmp_path):
-    create_workspace(tmp_path)
-    save_config(tmp_path, {"language": "de"})
-    set_resume_token_limit(tmp_path, 2000)
-    assert get_config(tmp_path)["language"] == "de"
-    assert get_config(tmp_path)["resume_token_limit"] == 2000
+    set_summarization_token_limit(tmp_path, 3000)
+    assert get_summarization_token_limit(tmp_path) == 3000

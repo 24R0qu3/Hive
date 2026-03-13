@@ -3,6 +3,8 @@ import logging
 import shutil
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from pathlib import Path
 
 from prompt_toolkit import Application
@@ -26,6 +28,7 @@ from hive import ai
 from hive.commands import COMMAND_NAMES, SYSTEM_PROMPT
 from hive.i18n import LANG_OPTIONS, t
 from hive.log import add_session_handler
+from hive.summarizer import RollingSummarizer, SUMMARY_PREFIX
 from hive.ui.history import HistoryManager
 from hive.ui.panels import (
     build_language_panel,
@@ -36,31 +39,27 @@ from hive.ui.panels import (
 )
 from hive.user import get_user_name, has_user_name, set_user_name
 from hive.workspace import (
-    DEFAULT_RESUME_TOKEN_LIMIT,
+    DEFAULT_SUMMARIZATION_TOKEN_LIMIT,
     Session,
     create_workspace,
     get_language,
     get_model,
-    get_resume_token_limit,
+    get_summarization_token_limit,
     has_language,
     list_sessions,
     load_conversation,
+    load_full_conversation,
     load_output,
     new_session,
     save_conversation,
+    save_full_conversation,
     save_output,
     set_language,
     set_model,
-    set_resume_token_limit,
+    update_meta,
 )
 
 logger = logging.getLogger(__name__)
-
-# Preset token limits cycled by the [L] key in the resume picker.
-# None means "unlimited" — the full conversation is always replayed verbatim.
-# The last logical slot (index == len) activates custom freeform input.
-_LIMIT_PRESETS: list[int | None] = [500, 1000, 2000, 4000, None]
-_LIMIT_CUSTOM_IDX: int = len(_LIMIT_PRESETS)  # sentinel for the custom-input slot
 
 # Windows Terminal (kitty keyboard protocol): Shift+Enter → \x1b[13;2u.
 # Map it to c-j so we can bind newline to that key.
@@ -160,27 +159,19 @@ class HiveApp:
         self._resume_idx: int = 0
         self._resume_panel_key: tuple = (-1, -1)
 
-        # Context token-limit cycling within the resume picker.
-        # _cached_token_limit mirrors the value in config.json so we avoid a
-        # file read on every render frame while the picker is open.
-        _stored_limit = (
-            get_resume_token_limit(cwd) if (trusted or session is not None)
-            else DEFAULT_RESUME_TOKEN_LIMIT
-        )
-        self._cached_token_limit: int | None = _stored_limit
-        try:
-            self._limit_preset_idx: int = _LIMIT_PRESETS.index(_stored_limit)
-        except ValueError:
-            # Value is a custom number not in the preset list.
-            self._limit_preset_idx = _LIMIT_CUSTOM_IDX
-        self._setting_limit: bool = False  # True while custom-input mode is active
-
         # --- hint state ---
         self._hint_idx: int = 0
 
         # --- AI state ---
         self._provider: ai.AIProvider = ai.OllamaProvider()
         self._model: str = get_model(cwd) or ai.DEFAULT_MODEL
+        _sum_limit = (
+            get_summarization_token_limit(cwd)
+            if (trusted or session is not None)
+            else DEFAULT_SUMMARIZATION_TOKEN_LIMIT
+        )
+        self._summarizer = RollingSummarizer(self._provider, self._model, _sum_limit)
+        self._full_conversation: list[dict] = []
         self._conversation: list[dict] = []
         self._ai_thinking: bool = False
         self._last_ctrl_c: float = 0.0
@@ -194,16 +185,18 @@ class HiveApp:
         if session is not None and session.output_path.exists():
             self._output_lines = load_output(session)
 
-        # Restore AI conversation context for CLI --resume.
-        # _restore_context may call the AI synchronously (for summarisation)
-        # which is fine here because the TUI has not started yet.
         if session is not None:
-            ctx_msgs, ctx_notice = self._restore_context(session)
-            self._conversation = ctx_msgs
-            if ctx_notice:
-                self._output_lines.extend(
-                    self._render_to_lines(f"[dim]{ctx_notice}[/dim]")
-                )
+            with ThreadPoolExecutor(max_workers=2) as ex:
+                f_conv = ex.submit(load_conversation, session)
+                f_full = ex.submit(load_full_conversation, session)
+            self._conversation = f_conv.result()
+            self._full_conversation = f_full.result()
+            # Migration: seed full history from compact conversation if missing
+            if not self._full_conversation and self._conversation:
+                self._full_conversation = [
+                    m for m in self._conversation
+                    if m.get("role") != "system"
+                ]
 
         # --- history ---
         self._history = HistoryManager(
@@ -365,9 +358,7 @@ class HiveApp:
             event.app.invalidate()
 
         # -- Resume picker: ↑ ↓ to navigate, Enter/Esc to confirm/cancel --
-        # These bindings are active only when NOT in custom-limit input mode.
-        _resume_normal = Condition(lambda: self._resuming and not self._setting_limit)
-        _resume_setting = Condition(lambda: self._resuming and self._setting_limit)
+        _resume_normal = Condition(lambda: self._resuming)
 
         @kb.add("up", filter=_resume_normal, eager=True)
         def resume_up(event):
@@ -392,52 +383,6 @@ class HiveApp:
         def resume_cancel(event):
             self._resuming = False
             self._welcome_width = -1
-            event.app.invalidate()
-
-        # -- Resume picker: [L] cycles the context token-limit preset --
-        @kb.add("l", filter=_resume_normal, eager=True)
-        def resume_cycle_limit(event):
-            """Advance to the next preset; the last slot activates custom input."""
-            self._limit_preset_idx = (self._limit_preset_idx + 1) % (
-                _LIMIT_CUSTOM_IDX + 1
-            )
-            if self._limit_preset_idx == _LIMIT_CUSTOM_IDX:
-                # Activate custom-input mode — user types into the input field.
-                self._setting_limit = True
-                self.input_field.text = ""
-            else:
-                new_limit = _LIMIT_PRESETS[self._limit_preset_idx]
-                self._cached_token_limit = new_limit
-                set_resume_token_limit(self._cwd, new_limit)
-            self._resume_panel_key = (-1, -1)
-            event.app.invalidate()
-
-        @kb.add("enter", filter=_resume_setting, eager=True)
-        def limit_input_confirm(event):
-            """Save a custom token limit typed into the input field."""
-            text = self.input_field.text.strip()
-            try:
-                limit = int(text)
-                if limit > 0:
-                    self._cached_token_limit = limit
-                    set_resume_token_limit(self._cwd, limit)
-            except ValueError:
-                pass  # ignore non-numeric input; keep previous limit
-            self.input_field.text = ""
-            self._setting_limit = False
-            self._resume_panel_key = (-1, -1)
-            event.app.invalidate()
-
-        @kb.add("escape", filter=_resume_setting, eager=True)
-        def limit_input_cancel(event):
-            """Cancel custom-limit input without changing the stored value."""
-            self.input_field.text = ""
-            self._setting_limit = False
-            # Step back to the previous preset so L-cycling stays coherent.
-            self._limit_preset_idx = (self._limit_preset_idx - 1) % (
-                _LIMIT_CUSTOM_IDX + 1
-            )
-            self._resume_panel_key = (-1, -1)
             event.app.invalidate()
 
         # -- Inline hint navigation + Tab to accept --
@@ -733,8 +678,6 @@ class HiveApp:
             resume_key = (
                 width,
                 self._resume_idx,
-                self._cached_token_limit,
-                self._setting_limit,
             )
             if resume_key != self._resume_panel_key:
                 self._resume_panel_key = resume_key
@@ -744,8 +687,6 @@ class HiveApp:
                         self._resume_idx,
                         width,
                         self._lang,
-                        token_limit=self._cached_token_limit,
-                        setting_limit=self._setting_limit,
                     ),
                     width,
                 )
@@ -770,111 +711,90 @@ class HiveApp:
         start = max(0, end - available)
         return list(to_formatted_text(ANSI("\n".join(all_lines[start:end]))))
 
-    def _restore_context(self, session: Session) -> "tuple[list[dict], str]":
-        """Load and prepare AI conversation context for a resumed session.
+    def _split_conversation(self) -> "tuple[str | None, list[dict]]":
+        """Return (summary_text_or_None, recent_pairs)."""
+        if self._conversation and self._conversation[0].get("role") == "system":
+            content = self._conversation[0].get("content", "")
+            if content.startswith(SUMMARY_PREFIX):
+                return content, self._conversation[1:]
+        return None, self._conversation
 
-        Token count is approximated as ``total_chars // 4``.
+    def _maybe_summarize(self) -> None:
+        """Trigger background rolling summarization if token threshold exceeded."""
+        current_summary, recent_pairs = self._split_conversation()
+        if not self._summarizer.needs_summarization(recent_pairs):
+            return
 
-        - **Under the limit**: the raw conversation is returned verbatim.
-        - **Over the limit**: an AI summarisation call is attempted and the
-          result is injected as a single system message.  On failure the last
-          *N* messages that fit within the budget are returned instead.
+        def on_done(new_conv: list[dict]) -> None:
+            self._conversation = new_conv
+            if self._session:
+                save_conversation(self._session, self._conversation)
 
-        Returns ``(messages, notice)`` where *notice* is a Rich-markup string
-        to append to the output area (empty string when there is no context).
-        """
-        conversation = load_conversation(session)
-        if not conversation:
-            return [], ""
+        self._summarizer.try_summarize_background(current_summary, recent_pairs, on_done)
 
-        token_limit = self._cached_token_limit  # None = unlimited
-        token_count = sum(len(m.get("content") or "") for m in conversation) // 4
+    def _save_session_sync(self) -> None:
+        """Save all session state. Runs a final synchronous summarization if needed."""
+        import time as _time
+        deadline = _time.monotonic() + 10
+        while self._summarizer.is_busy and _time.monotonic() < deadline:
+            _time.sleep(0.05)
 
-        # ── Under (or at) the limit: replay verbatim ────────────────────────
-        if token_limit is None or token_count <= token_limit:
-            n = len(conversation)
-            return conversation, t("context.restored", self._lang).format(n=n)
-
-        # ── Over the limit: try AI summarisation ────────────────────────────
-        try:
-            summary = self._provider.chat(
-                conversation
-                + [
+        # Final sync summarization if there are unsummarized pairs + existing summary
+        current_summary, recent_pairs = self._split_conversation()
+        if recent_pairs and current_summary is not None:
+            try:
+                text = self._summarizer.summarize_sync(current_summary, recent_pairs)
+                self._conversation = [
                     {
-                        "role": "user",
-                        "content": (
-                            "Briefly summarize this conversation in 3-4 sentences. "
-                            "Focus on what was discussed and the context needed to "
-                            "continue the session."
-                        ),
+                        "role": "system",
+                        "content": f"{SUMMARY_PREFIX}{text}",
                     }
-                ],
-                self._model,
-            )
-            messages: list[dict] = [
-                {
-                    "role": "system",
-                    "content": f"Previous session summary: {summary}",
-                }
-            ]
-            return messages, t("context.summarized", self._lang)
-        except Exception:
-            pass
+                ]
+            except Exception:
+                pass
 
-        # ── Fallback: last N messages that fit within the token budget ───────
-        budget = token_limit * 4  # convert tokens → approximate chars
-        truncated: list[dict] = []
-        for msg in reversed(conversation):
-            chars = len(msg.get("content") or "")
-            if budget - chars < 0:
-                break
-            truncated.insert(0, msg)
-            budget -= chars
-        n = len(truncated)
-        return truncated, t("context.partial", self._lang).format(n=n)
+        last_user = next(
+            (m["content"] for m in reversed(self._full_conversation) if m.get("role") == "user"),
+            "",
+        )
+        last_message = last_user[:60] + ("\u2026" if len(last_user) > 60 else "")
+        ended_at = datetime.now().isoformat()
+
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            ex.submit(save_output, self._session, self._output_lines)
+            ex.submit(save_conversation, self._session, self._conversation)
+            ex.submit(save_full_conversation, self._session, self._full_conversation)
+            ex.submit(update_meta, self._session, ended_at, last_message)
 
     def _load_session_inline(self, session: Session) -> None:
-        """Save the current session's state and restore output + history from another.
-
-        Context restoration (which may involve an AI summarisation call) is
-        offloaded to a daemon thread so the TUI remains responsive.  A
-        "Restoring context…" placeholder is shown in the output area and
-        replaced with the final notice once the thread finishes.
-        """
         if self._session is not None:
-            save_output(self._session, self._output_lines)
-            save_conversation(self._session, self._conversation)
+            s = self._session
+            out = self._output_lines[:]
+            conv = self._conversation[:]
+            full = self._full_conversation[:]
+            last_user = next(
+                (m["content"] for m in reversed(full) if m.get("role") == "user"), ""
+            )
+            last_message = last_user[:60] + ("\u2026" if len(last_user) > 60 else "")
+            ended_at = datetime.now().isoformat()
+            with ThreadPoolExecutor(max_workers=4) as ex:
+                ex.submit(save_output, s, out)
+                ex.submit(save_conversation, s, conv)
+                ex.submit(save_full_conversation, s, full)
+                ex.submit(update_meta, s, ended_at, last_message)
+
         self._session = session
-        self._conversation = []
+        self._conversation = load_conversation(session)
+        self._full_conversation = load_full_conversation(session)
+        if not self._full_conversation and self._conversation:
+            self._full_conversation = [
+                m for m in self._conversation if m.get("role") != "system"
+            ]
         self._output_lines = load_output(session)
         self._history.path = session.history_path
         self._scroll_offset = 0
-
-        # Insert a loading placeholder that the background thread will replace.
-        loading_lines = self._render_to_lines(
-            f"[dim]{t('context.loading', self._lang)}[/dim]"
-        )
-        self._output_lines.extend(loading_lines)
-        placeholder_start = len(self._output_lines) - len(loading_lines)
-        placeholder_len = len(loading_lines)
-
         if self.app.is_running:
             self.app.invalidate()
-
-        def _ctx_thread() -> None:
-            msgs, notice = self._restore_context(session)
-            self._conversation = msgs
-            notice_lines = (
-                self._render_to_lines(f"[dim]{notice}[/dim]") if notice else []
-            )
-            # Swap placeholder for the actual notice (or remove it if empty).
-            self._output_lines[
-                placeholder_start : placeholder_start + placeholder_len
-            ] = notice_lines
-            if self.app.is_running:
-                self.app.invalidate()
-
-        threading.Thread(target=_ctx_thread, daemon=True).start()
 
     # -----------------------------------------------------------------------
     # Public API
@@ -933,7 +853,9 @@ class HiveApp:
             table = Table(title=t("sessions.title", self._lang), border_style="#FFC107")
             table.add_column(t("sessions.col.id", self._lang), style="#FFC107")
             table.add_column(t("sessions.col.started", self._lang))
+            table.add_column(t("sessions.col.ended", self._lang))
             table.add_column(t("sessions.col.commands", self._lang), justify="right")
+            table.add_column(t("sessions.col.last_message", self._lang))
             for s in sessions:
                 cmd_count = 0
                 if s.history_path.exists():
@@ -945,7 +867,13 @@ class HiveApp:
                         if ln.strip()
                     ]
                     cmd_count = len(lines)
-                table.add_row(s.id, s.started, str(cmd_count))
+                table.add_row(
+                    s.id,
+                    s.started,
+                    (s.meta.get("ended_at") or "")[:16],
+                    str(cmd_count),
+                    s.meta.get("last_message", ""),
+                )
             self.print(table)
             return
 
@@ -970,6 +898,7 @@ class HiveApp:
         """Echo user input, then call the AI in a background thread with a live timer."""
         self.print(f"[#FFC107]→[/#FFC107] {user_text}")
         self._conversation.append({"role": "user", "content": user_text})
+        self._full_conversation.append({"role": "user", "content": user_text})
         self._ai_thinking = True
 
         # Reserve a line in the output for the thinking animation
@@ -1016,6 +945,8 @@ class HiveApp:
             else:
                 reply = result[0] or ""
                 self._conversation.append({"role": "assistant", "content": reply})
+                self._full_conversation.append({"role": "assistant", "content": reply})
+                self._maybe_summarize()
                 reply_lines = self._render_to_lines(reply, width=width)
                 self._output_lines[thinking_idx : thinking_idx + 1] = reply_lines
 
@@ -1032,6 +963,5 @@ class HiveApp:
             self.app.run()
         finally:
             if self._session:
-                save_output(self._session, self._output_lines)
-                save_conversation(self._session, self._conversation)
+                self._save_session_sync()
                 print(t("exit.resume", self._lang).format(id=self._session.id))

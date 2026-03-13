@@ -27,6 +27,11 @@ class Session:
         return self.path / "conversation.json"
 
     @property
+    def full_conversation_path(self) -> Path:
+        """Append-only raw history for display/audit. Never sent to AI."""
+        return self.path / "full_conversation.json"
+
+    @property
     def log_path(self) -> Path:
         return self.path / "hive.log"
 
@@ -60,6 +65,8 @@ def new_session(cwd: Path) -> Session:
         "id": session_id,
         "started": datetime.now().isoformat(),
         "cwd": str(cwd),
+        "ended_at": None,
+        "last_message": "",
     }
     (session_path / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
     return Session(id=session_id, path=session_path, meta=meta)
@@ -165,34 +172,52 @@ def load_conversation(session: Session) -> list[dict]:
     return []
 
 
+def save_full_conversation(session: Session, messages: list[dict]) -> None:
+    """Overwrite full_conversation.json with the complete raw history."""
+    session.full_conversation_path.write_text(
+        json.dumps(messages, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def load_full_conversation(session: Session) -> list[dict]:
+    """Load raw history. Returns [] on missing file or JSON error."""
+    if not session.full_conversation_path.exists():
+        return []
+    try:
+        data = json.loads(session.full_conversation_path.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            return data
+    except (json.JSONDecodeError, OSError):
+        pass
+    return []
+
+
+def update_meta(session: Session, ended_at: str, last_message: str) -> None:
+    """Overwrite ended_at and last_message in meta.json, preserving other keys."""
+    path = session.path / "meta.json"
+    meta = json.loads(path.read_text(encoding="utf-8"))
+    meta["ended_at"] = ended_at
+    meta["last_message"] = last_message
+    path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+
+
 # ---------------------------------------------------------------------------
-# Resume token-limit config
+# Summarization token-limit config
 # ---------------------------------------------------------------------------
 
-#: Default maximum token count for raw conversation replay on resume.
-#: Conversations over this limit are summarised by the AI instead.
-DEFAULT_RESUME_TOKEN_LIMIT: int = 2000
+DEFAULT_SUMMARIZATION_TOKEN_LIMIT: int = 1500
 
 
-def get_resume_token_limit(cwd: Path) -> "int | None":
-    """Return the configured resume token limit for *cwd*.
-
-    Returns ``None`` when the limit is set to *unlimited* (the full
-    conversation is always replayed verbatim).  Falls back to
-    ``DEFAULT_RESUME_TOKEN_LIMIT`` when the key is not present in config.
-    """
-    value = get_config(cwd).get("resume_token_limit", DEFAULT_RESUME_TOKEN_LIMIT)
-    # None is stored as JSON null to signal "unlimited".
-    return None if value is None else int(value)
+def get_summarization_token_limit(cwd: Path) -> int:
+    """Return the configured rolling summarization token limit."""
+    value = get_config(cwd).get("summarization_token_limit", DEFAULT_SUMMARIZATION_TOKEN_LIMIT)
+    return int(value)
 
 
-def set_resume_token_limit(cwd: Path, limit: "int | None") -> None:
-    """Persist the resume token limit to ``.hive/config.json``.
-
-    Pass ``None`` to set *unlimited* (stored as JSON null).
-    """
+def set_summarization_token_limit(cwd: Path, limit: int) -> None:
     config = get_config(cwd)
-    config["resume_token_limit"] = limit
+    config["summarization_token_limit"] = limit
     save_config(cwd, config)
 
 
