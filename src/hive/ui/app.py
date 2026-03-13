@@ -21,7 +21,8 @@ from rich.console import Console
 from rich.table import Table
 
 from hive import ai
-from hive.commands import COMMAND_NAMES, SYSTEM_PROMPT
+from hive.commands import AI_TOOLS, COMMAND_NAMES, SYSTEM_PROMPT, run_tool
+from hive.mcp import MCPManager, MCPServerConfig
 from hive.i18n import LANG_OPTIONS, t
 from hive.log import add_session_handler
 from hive.ui.history import HistoryManager
@@ -38,6 +39,7 @@ from hive.workspace import (
     Session,
     create_workspace,
     get_language,
+    get_mcp_configs,
     get_model,
     has_language,
     list_sessions,
@@ -188,6 +190,9 @@ class HiveApp:
         self._ai_thinking: bool = False
         self._last_ctrl_c: float = 0.0
         self._transient_hint: str = ""
+
+        # --- MCP state ---
+        self._mcp = MCPManager()
 
         # --- output state ---
         self._welcome_lines: list[str] = []
@@ -872,6 +877,21 @@ class HiveApp:
             self.print(table)
             return
 
+        if text == "/mcp":
+            servers = self._mcp.servers()
+            if not servers:
+                self.print(t("mcp.none", self._lang))
+                return
+            table = Table(
+                title=t("mcp.title", self._lang), border_style="#FFC107"
+            )
+            table.add_column(t("mcp.col.server", self._lang), style="#FFC107")
+            table.add_column(t("mcp.col.tools", self._lang), justify="right")
+            for name, conn in servers.items():
+                table.add_row(name, str(len(conn.tools)))
+            self.print(table)
+            return
+
         if text.startswith("/model"):
             parts = text.split(None, 1)
             if len(parts) == 1:
@@ -919,11 +939,21 @@ class HiveApp:
         error: list[str | None] = [None]
         width = self._current_width()
 
+        mcp_tools = self._mcp.list_tools()
+        all_tools = AI_TOOLS + mcp_tools
+
+        def _tool_executor(name: str, args: dict) -> str:
+            if "__" in name:
+                return self._mcp.call_tool(name, args)
+            return run_tool(name, args)
+
         def _ai_thread() -> None:
             try:
                 result[0] = self._provider.chat(
                     [{"role": "system", "content": SYSTEM_PROMPT}] + self._conversation,
                     self._model,
+                    tools=all_tools,
+                    tool_executor=_tool_executor,
                 )
             except Exception as exc:
                 error[0] = str(exc)
@@ -963,8 +993,26 @@ class HiveApp:
         threading.Thread(target=_ai_thread, daemon=True).start()
         threading.Thread(target=_anim_thread, daemon=True).start()
 
+    def _connect_mcp_server(self, config: MCPServerConfig) -> None:
+        """Connect to one MCP server in a background thread; print on error."""
+        try:
+            self._mcp.connect(config)
+            logger.info("MCP: connected to '%s'", config.name)
+        except Exception as exc:
+            self.print(t("mcp.error", self._lang).format(name=config.name, error=exc))
+
     def run(self):
         logger.debug("HiveApp started")
+        # Connect to enabled MCP servers in background threads so startup is
+        # non-blocking. Errors are printed to the output area once the app runs.
+        for raw in get_mcp_configs(self._cwd):
+            config = MCPServerConfig.from_dict(raw)
+            if config.enabled:
+                threading.Thread(
+                    target=self._connect_mcp_server,
+                    args=(config,),
+                    daemon=True,
+                ).start()
         self.app.run()
         if self._session:
             save_output(self._session, self._output_lines)

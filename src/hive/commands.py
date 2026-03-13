@@ -54,6 +54,11 @@ COMMAND_REGISTRY: list[CommandDoc] = [
             "with their start times and command counts."
         ),
     ),
+    CommandDoc(
+        name="/mcp",
+        usage="/mcp",
+        description="List connected MCP servers and their available tools.",
+    ),
 ]
 
 # Bare command names — used for autocomplete and coloring in the TUI.

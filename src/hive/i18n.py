@@ -43,6 +43,12 @@ _STRINGS: dict[str, dict[str, str]] = {
         # AI
         "ai.busy": "Still thinking\u2026 please wait.",
         "ai.error": "Error: {error}",
+        # MCP
+        "mcp.title": "MCP Servers",
+        "mcp.col.server": "Server",
+        "mcp.col.tools": "Tools",
+        "mcp.none": "No MCP servers connected.",
+        "mcp.error": "MCP: failed to connect to '{name}': {error}",
         # exit hint
         "exit.resume": "To resume:  hive --resume {id}",
     },
@@ -79,6 +85,12 @@ _STRINGS: dict[str, dict[str, str]] = {
         # AI
         "ai.busy": "Noch am Denken\u2026 bitte warten.",
         "ai.error": "Fehler: {error}",
+        # MCP
+        "mcp.title": "MCP-Server",
+        "mcp.col.server": "Server",
+        "mcp.col.tools": "Tools",
+        "mcp.none": "Keine MCP-Server verbunden.",
+        "mcp.error": "MCP: Verbindung zu '{name}' fehlgeschlagen: {error}",
         # exit hint
         "exit.resume": "Fortsetzen mit:  hive --resume {id}",
     },
