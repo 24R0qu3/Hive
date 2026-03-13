@@ -25,11 +25,13 @@ _STRINGS: dict[str, dict[str, str]] = {
         "welcome.hint": "Enter · Shift+Enter newline · Shift+drag to select · Ctrl+C ×2 exit",
         # resume picker
         "resume.heading": "Choose a session to resume:",
-        "resume.hint": "↑ ↓ to navigate · Enter to resume · Esc to cancel",
+        "resume.hint": "↑ ↓ navigate · Enter resume · Esc cancel",
         # sessions
         "sessions.title": "Sessions",
         "sessions.col.id": "ID",
         "sessions.col.started": "Started",
+        "sessions.col.ended": "Ended",
+        "sessions.col.last_message": "Last message",
         "sessions.col.commands": "Commands",
         "sessions.none": "No sessions found.",
         "sessions.none_resume": "No sessions to resume.",
@@ -63,6 +65,8 @@ _STRINGS: dict[str, dict[str, str]] = {
         "sessions.title": "Sitzungen",
         "sessions.col.id": "ID",
         "sessions.col.started": "Gestartet",
+        "sessions.col.ended": "Beendet",
+        "sessions.col.last_message": "Letzte Nachricht",
         "sessions.col.commands": "Befehle",
         "sessions.none": "Keine Sitzungen gefunden.",
         "sessions.none_resume": "Keine Sitzungen zum Fortsetzen.",

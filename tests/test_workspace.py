@@ -4,20 +4,28 @@ import logging
 import pytest
 
 from hive.workspace import (
+    DEFAULT_SUMMARIZATION_TOKEN_LIMIT,
     create_workspace,
     get_config,
     get_language,
     get_model,
     get_session,
+    get_summarization_token_limit,
     has_language,
     is_trusted,
     list_sessions,
+    load_conversation,
+    load_full_conversation,
     load_output,
     new_session,
     save_config,
+    save_conversation,
+    save_full_conversation,
     save_output,
     set_language,
     set_model,
+    set_summarization_token_limit,
+    update_meta,
 )
 
 # ---------------------------------------------------------------------------
@@ -116,6 +124,12 @@ def test_session_output_path(tmp_path):
     create_workspace(tmp_path)
     session = new_session(tmp_path)
     assert session.output_path == session.path / "output"
+
+
+def test_session_conversation_path(tmp_path):
+    create_workspace(tmp_path)
+    session = new_session(tmp_path)
+    assert session.conversation_path == session.path / "conversation.json"
 
 
 def test_session_log_path(tmp_path):
@@ -417,3 +431,145 @@ def test_set_model_preserves_other_config_keys(tmp_path):
     set_model(tmp_path, "llama3.2")
     assert get_config(tmp_path)["language"] == "en"
     assert get_config(tmp_path)["model"] == "llama3.2"
+
+
+# ---------------------------------------------------------------------------
+# save_conversation / load_conversation
+# ---------------------------------------------------------------------------
+
+
+def test_session_conversation_path_property(tmp_path):
+    create_workspace(tmp_path)
+    session = new_session(tmp_path)
+    assert session.conversation_path == session.path / "conversation.json"
+
+
+def test_save_and_load_conversation_roundtrip(tmp_path):
+    create_workspace(tmp_path)
+    session = new_session(tmp_path)
+    conversation = [
+        {"role": "user", "content": "Hello"},
+        {"role": "assistant", "content": "Hi there!"},
+    ]
+    save_conversation(session, conversation)
+    assert load_conversation(session) == conversation
+
+
+def test_load_conversation_empty_when_no_file(tmp_path):
+    create_workspace(tmp_path)
+    session = new_session(tmp_path)
+    assert load_conversation(session) == []
+
+
+def test_save_conversation_creates_file(tmp_path):
+    create_workspace(tmp_path)
+    session = new_session(tmp_path)
+    save_conversation(session, [{"role": "user", "content": "test"}])
+    assert session.conversation_path.exists()
+
+
+def test_load_conversation_empty_on_malformed_json(tmp_path):
+    create_workspace(tmp_path)
+    session = new_session(tmp_path)
+    session.conversation_path.write_text("not valid json", encoding="utf-8")
+    assert load_conversation(session) == []
+
+
+def test_load_conversation_empty_when_not_a_list(tmp_path):
+    """A JSON object (not an array) should be treated as malformed."""
+    create_workspace(tmp_path)
+    session = new_session(tmp_path)
+    session.conversation_path.write_text('{"role": "user"}', encoding="utf-8")
+    assert load_conversation(session) == []
+
+
+def test_save_conversation_preserves_unicode(tmp_path):
+    create_workspace(tmp_path)
+    session = new_session(tmp_path)
+    msgs = [{"role": "user", "content": "Héllo wörld 🐝"}]
+    save_conversation(session, msgs)
+    assert load_conversation(session) == msgs
+
+
+def test_save_conversation_overwrites_previous(tmp_path):
+    create_workspace(tmp_path)
+    session = new_session(tmp_path)
+    save_conversation(session, [{"role": "user", "content": "first"}])
+    save_conversation(session, [{"role": "user", "content": "second"}])
+    result = load_conversation(session)
+    assert len(result) == 1
+    assert result[0]["content"] == "second"
+
+
+# ---------------------------------------------------------------------------
+# full_conversation
+# ---------------------------------------------------------------------------
+
+
+def test_session_full_conversation_path_property(tmp_path):
+    session = new_session(tmp_path)
+    assert session.full_conversation_path == session.path / "full_conversation.json"
+
+
+def test_save_and_load_full_conversation_roundtrip(tmp_path):
+    session = new_session(tmp_path)
+    messages = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]
+    save_full_conversation(session, messages)
+    assert load_full_conversation(session) == messages
+
+
+def test_load_full_conversation_returns_empty_when_no_file(tmp_path):
+    session = new_session(tmp_path)
+    assert load_full_conversation(session) == []
+
+
+def test_load_full_conversation_returns_empty_on_malformed_json(tmp_path):
+    session = new_session(tmp_path)
+    session.full_conversation_path.write_text("not json", encoding="utf-8")
+    assert load_full_conversation(session) == []
+
+
+# ---------------------------------------------------------------------------
+# new_session meta fields / update_meta
+# ---------------------------------------------------------------------------
+
+
+def test_new_session_meta_has_ended_at_and_last_message(tmp_path):
+    session = new_session(tmp_path)
+    assert "ended_at" in session.meta
+    assert session.meta["ended_at"] is None
+    assert session.meta["last_message"] == ""
+
+
+def test_update_meta_writes_fields(tmp_path):
+    session = new_session(tmp_path)
+    update_meta(session, "2026-01-01T12:00:00", "hello world")
+    # reload meta
+    meta = json.loads((session.path / "meta.json").read_text(encoding="utf-8"))
+    assert meta["ended_at"] == "2026-01-01T12:00:00"
+    assert meta["last_message"] == "hello world"
+
+
+def test_update_meta_preserves_other_fields(tmp_path):
+    session = new_session(tmp_path)
+    original_id = session.id
+    original_started = session.meta["started"]
+    update_meta(session, "2026-01-01T12:00:00", "msg")
+    meta = json.loads((session.path / "meta.json").read_text(encoding="utf-8"))
+    assert meta["id"] == original_id
+    assert meta["started"] == original_started
+
+
+# ---------------------------------------------------------------------------
+# get_summarization_token_limit / set_summarization_token_limit
+# ---------------------------------------------------------------------------
+
+
+def test_get_summarization_token_limit_default(tmp_path):
+    assert get_summarization_token_limit(tmp_path) == DEFAULT_SUMMARIZATION_TOKEN_LIMIT
+
+
+def test_set_and_get_summarization_token_limit(tmp_path):
+    create_workspace(tmp_path)
+    set_summarization_token_limit(tmp_path, 3000)
+    assert get_summarization_token_limit(tmp_path) == 3000

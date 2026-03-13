@@ -194,7 +194,10 @@ def build_language_panel(lang_options: list, idx: int, width: int = 0) -> Panel:
 
 
 def build_resume_panel(
-    sessions: list[Session], idx: int, width: int = 0, lang: str = "en"
+    sessions: list[Session],
+    idx: int,
+    width: int = 0,
+    lang: str = "en",
 ) -> Panel:
     """Session resume picker panel."""
     rows = []
@@ -202,7 +205,11 @@ def build_resume_panel(
         selected = i == idx
         prefix = "▶ " if selected else "  "
         style = "bold #FFC107" if selected else ""
-        rows.append(Text(f"{prefix}{s.id}  {s.started}", style=style))
+        ended = (s.meta.get("ended_at") or "")[:16]
+        last_msg = s.meta.get("last_message") or ""
+        suffix = f"  {ended}  {last_msg}" if ended or last_msg else ""
+        label = f"{prefix}{s.id}  {s.started[:16]}{suffix}"
+        rows.append(Text(label, style=style))
 
     content = Group(
         Text(""),

@@ -30,9 +30,20 @@ def _render(panel, width: int = 80) -> str:
 def _fake_session(tmp_path: Path, session_id: str = "abc123") -> Session:
     session_path = tmp_path / session_id
     session_path.mkdir()
-    meta = {"id": session_id, "started": "2026-01-01T12:00:00", "cwd": str(tmp_path)}
+    meta = {
+        "id": session_id,
+        "started": "2026-01-01T12:00:00",
+        "cwd": str(tmp_path),
+        "ended_at": "2026-01-01T13:00:00",
+        "last_message": "test message",
+    }
     (session_path / "meta.json").write_text("{}", encoding="utf-8")
     return Session(id=session_id, path=session_path, meta=meta)
+
+
+def _panel_text(panel: Panel, width: int = 80) -> str:
+    """Render a panel to plain text."""
+    return _render(panel, width=width)
 
 
 # ---------------------------------------------------------------------------
@@ -238,7 +249,7 @@ def test_build_resume_panel_shows_session_id(tmp_path):
 def test_build_resume_panel_shows_started_timestamp(tmp_path):
     sessions = [_fake_session(tmp_path, "abc123")]
     output = _render(build_resume_panel(sessions, 0))
-    assert "2026-01-01T12:00:00" in output
+    assert "2026-01-01T12:00" in output
 
 
 def test_build_resume_panel_shows_selection_arrow(tmp_path):
@@ -263,3 +274,19 @@ def test_build_resume_panel_empty_sessions(tmp_path):
     # Should render without error even with no sessions
     panel = build_resume_panel([], 0)
     assert isinstance(panel, Panel)
+
+
+def test_build_resume_panel_shows_ended_at(tmp_path):
+    sessions = [_fake_session(tmp_path, "abc123")]
+    panel = build_resume_panel(sessions, 0)
+    text = _panel_text(panel)
+    # The fake session has ended_at = "2026-01-01T13:00:00"; first 16 chars appear
+    assert "2026-01-01T13:00" in text
+
+
+def test_build_resume_panel_shows_last_message(tmp_path):
+    sessions = [_fake_session(tmp_path, "abc123")]
+    panel = build_resume_panel(sessions, 0)
+    text = _panel_text(panel)
+    # The fake session has last_message = "test message"
+    assert "test message" in text
