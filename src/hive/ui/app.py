@@ -11,9 +11,7 @@ from prompt_toolkit import Application
 from prompt_toolkit.auto_suggest import Suggestion
 from prompt_toolkit.filters import Condition, has_focus
 from prompt_toolkit.formatted_text import ANSI, to_formatted_text
-from prompt_toolkit.input.vt100_parser import ANSI_SEQUENCES
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.keys import Keys
 from prompt_toolkit.layout import Layout
 from prompt_toolkit.layout.containers import ConditionalContainer, HSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
@@ -25,13 +23,15 @@ from rich.console import Console
 from rich.table import Table
 
 from hive import ai
-from hive.commands import COMMAND_NAMES, SYSTEM_PROMPT
+from hive.commands import AI_TOOLS, COMMAND_NAMES, SYSTEM_PROMPT, run_tool
+from hive.mcp import MCPManager, MCPServerConfig
 from hive.i18n import LANG_OPTIONS, t
 from hive.log import add_session_handler
 from hive.summarizer import SUMMARY_PREFIX, RollingSummarizer
 from hive.ui.history import HistoryManager
 from hive.ui.panels import (
     build_language_panel,
+    build_model_panel,
     build_name_panel,
     build_resume_panel,
     build_trust_panel,
@@ -43,6 +43,7 @@ from hive.workspace import (
     Session,
     create_workspace,
     get_language,
+    get_mcp_configs,
     get_model,
     get_summarization_token_limit,
     has_language,
@@ -61,14 +62,38 @@ from hive.workspace import (
 
 logger = logging.getLogger(__name__)
 
-# Windows Terminal (kitty keyboard protocol): Shift+Enter → \x1b[13;2u.
-# Map it to c-j so we can bind newline to that key.
-ANSI_SEQUENCES.setdefault("\x1b[13;2u", Keys.ControlJ)
+
+
+class _ScrollableWindow(Window):
+    """Window subclass that routes scroll events to a caller-supplied handler.
+
+    Overrides the private ``_mouse_handler`` method so that scroll events are
+    handled by *on_scroll* while all other mouse events fall through to the
+    default prompt_toolkit logic.  The override is explicit (a subclass method)
+    rather than an instance monkey-patch, which means it survives pickling and
+    is easier to reason about.  If prompt_toolkit ever renames the method the
+    subclass will just inherit the default again — scroll won't work, but
+    nothing will crash.
+    """
+
+    def __init__(self, *args, on_scroll=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._on_scroll = on_scroll
+
+    def _mouse_handler(self, mouse_event: MouseEvent):  # type: ignore[override]
+        if self._on_scroll and mouse_event.event_type in (
+            MouseEventType.SCROLL_UP,
+            MouseEventType.SCROLL_DOWN,
+        ):
+            return self._on_scroll(mouse_event)
+        return super()._mouse_handler(mouse_event)
+
 
 _STYLE = Style.from_dict(
     {
         "slash-cmd": "#FFC107 bold",
         "hint": "#666666",
+        "transient-hint": "#999999 italic",
     }
 )
 
@@ -159,6 +184,12 @@ class HiveApp:
         self._resume_idx: int = 0
         self._resume_panel_key: tuple = (-1, -1)
 
+        # --- model picker state ---
+        self._picking_model: bool = False
+        self._model_list: list[str] = []
+        self._model_idx: int = 0
+        self._model_panel_key: tuple = (-1, -1)
+
         # --- hint state ---
         self._hint_idx: int = 0
 
@@ -175,6 +206,10 @@ class HiveApp:
         self._conversation: list[dict] = []
         self._ai_thinking: bool = False
         self._last_ctrl_c: float = 0.0
+        self._transient_hint: str = ""
+
+        # --- MCP state ---
+        self._mcp = MCPManager()
 
         # --- output state ---
         self._welcome_lines: list[str] = []
@@ -262,11 +297,15 @@ class HiveApp:
                 or self._awaiting_trust
                 or self._picking_language
                 or self._resuming
+                or self._picking_model
             )
         )
         # Blocks history nav (but not name — user is typing freely there)
         _not_picker = ~Condition(
-            lambda: self._resuming or self._picking_language or self._awaiting_name
+            lambda: self._resuming
+            or self._picking_language
+            or self._picking_model
+            or self._awaiting_name
         )
 
         # -- Name input: Enter saves name, transitions to next modal --
@@ -379,8 +418,43 @@ class HiveApp:
             event.app.invalidate()
 
         @kb.add("escape", filter=_resume_normal, eager=True)
+        @kb.add("c-c", filter=_resume_normal, eager=True)
         def resume_cancel(event):
             self._resuming = False
+            self._welcome_width = -1
+            event.app.invalidate()
+
+        # -- Model picker: ↑ ↓ to navigate, Enter to select, Esc/Ctrl+C to cancel --
+        _model_active = Condition(lambda: self._picking_model)
+
+        @kb.add("up", filter=_model_active, eager=True)
+        def model_up(event):
+            self._model_idx = max(0, self._model_idx - 1)
+            self._model_panel_key = (-1, -1)
+            event.app.invalidate()
+
+        @kb.add("down", filter=_model_active, eager=True)
+        def model_down(event):
+            self._model_idx = min(len(self._model_list) - 1, self._model_idx + 1)
+            self._model_panel_key = (-1, -1)
+            event.app.invalidate()
+
+        @kb.add("enter", filter=_model_active, eager=True)
+        def model_confirm(event):
+            if self._model_list:
+                chosen = self._model_list[self._model_idx]
+                self._model = chosen
+                if self._session:
+                    set_model(self._cwd, chosen)
+                self.print(t("model.set", self._lang).format(model=chosen))
+            self._picking_model = False
+            self._welcome_width = -1
+            event.app.invalidate()
+
+        @kb.add("escape", filter=_model_active, eager=True)
+        @kb.add("c-c", filter=_model_active, eager=True)
+        def model_cancel(event):
+            self._picking_model = False
             self._welcome_width = -1
             event.app.invalidate()
 
@@ -515,10 +589,21 @@ class HiveApp:
         @kb.add("c-c")
         def ctrl_c(event):
             now = time.monotonic()
-            if now - self._last_ctrl_c < 0.5:
+            if now - self._last_ctrl_c < 1.0:
                 event.app.exit()
             else:
                 self._last_ctrl_c = now
+                self._transient_hint = "Press Ctrl+C again to exit"
+                event.app.invalidate()
+
+                def _clear_hint():
+                    self._transient_hint = ""
+                    try:
+                        self.app.invalidate()
+                    except Exception:
+                        pass
+
+                threading.Timer(1.0, _clear_hint).start()
 
         @kb.add("c-d")
         def exit_app(event):
@@ -538,34 +623,44 @@ class HiveApp:
             return NotImplemented
 
         # --- output window ---
-        self.output_window = Window(
+        # _ScrollableWindow routes scroll events to _scroll_output via a
+        # subclass override rather than instance monkey-patching.
+        self.output_window = _ScrollableWindow(
             content=FormattedTextControl(self._get_fragments, focusable=False),
             wrap_lines=False,
+            on_scroll=_scroll_output,
         )
-        self.output_window._mouse_handler = _scroll_output
-        self.input_field.window._mouse_handler = _scroll_output
+        # TextArea.window is a plain Window with no public scroll hook.
+        # We patch the instance attribute as a best-effort fallback so that
+        # scroll also works when the cursor is in the input field.
+        try:
+            self.input_field.window._mouse_handler = _scroll_output
+        except Exception:
+            logger.warning("Could not attach scroll handler to input window.")
 
-        # --- suggestions window (rendered below the input frame) ---
+        # --- suggestions + transient-hint window (rendered below the input frame) ---
+        # Always at least 1 row tall so the layout never shifts when a hint appears.
         def _hints_fragments():
-            matches = _hint_matches()
-            if not matches:
-                return []
-            idx = min(self._hint_idx, len(matches) - 1)
             parts: list = []
-            for i, cmd in enumerate(matches):
-                if i == idx:
-                    parts += [("class:slash-cmd", f" ▶ {cmd}"), ("", "\n")]
-                else:
-                    parts += [("class:hint", f"   {cmd}"), ("", "\n")]
+            matches = _hint_matches()
+            if matches:
+                idx = min(self._hint_idx, len(matches) - 1)
+                for i, cmd in enumerate(matches):
+                    if i == idx:
+                        parts += [("class:slash-cmd", f" ▶ {cmd}"), ("", "\n")]
+                    else:
+                        parts += [("class:hint", f"   {cmd}"), ("", "\n")]
+            if self._transient_hint:
+                parts += [("class:transient-hint", f"  {self._transient_hint}")]
             return parts
 
-        hints_window = ConditionalContainer(
-            content=Window(
-                content=FormattedTextControl(_hints_fragments),
-                height=lambda: len(_hint_matches()),
-                dont_extend_height=True,
-            ),
-            filter=_has_hints,
+        def _hints_height() -> int:
+            return len(_hint_matches()) + 1  # +1: reserved row for transient hint
+
+        hints_window = Window(
+            content=FormattedTextControl(_hints_fragments),
+            height=_hints_height,
+            dont_extend_height=True,
         )
 
         @kb.add("pageup")
@@ -622,7 +717,17 @@ class HiveApp:
                 for line in input_lines
             ),
         )
-        return max(1, rows - input_h - 2)
+        # hints_window is always at least 1 row (reserved for transient hint)
+        # plus one row per matching slash-command completion.
+        cmd_text = text.strip()
+        if cmd_text.startswith("/") and "\n" not in cmd_text:
+            n_hints = len(
+                [c for c in _COMMANDS if c.startswith(cmd_text) and c != cmd_text][:5]
+            )
+        else:
+            n_hints = 0
+        hints_h = n_hints + 1
+        return max(1, rows - input_h - 2 - hints_h)
 
     def _render_to_lines(self, renderable, width: int | None = None) -> list[str]:
         buf = io.StringIO()
@@ -691,6 +796,18 @@ class HiveApp:
                 )
             return _slice(self._welcome_lines)
 
+        if self._picking_model:
+            model_key = (width, self._model_idx)
+            if model_key != self._model_panel_key:
+                self._model_panel_key = model_key
+                self._welcome_lines = self._render_to_lines(
+                    build_model_panel(
+                        self._model_list, self._model, self._model_idx, self._lang
+                    ),
+                    width,
+                )
+            return _slice(self._welcome_lines)
+
         if width != self._welcome_width:
             self._welcome_width = width
             session_id = self._session.id if self._session else None
@@ -702,7 +819,12 @@ class HiveApp:
             )
 
         available = self._output_height()
-        all_lines = self._welcome_lines + self._output_lines
+        # Pad welcome to always fill the viewport so the first output line
+        # replaces the last empty line instead of jumping the welcome down.
+        welcome_padded = self._welcome_lines + [
+            "" for _ in range(max(0, available - len(self._welcome_lines)))
+        ]
+        all_lines = welcome_padded + self._output_lines
         total = len(all_lines)
         if total == 0:
             return []
@@ -883,10 +1005,39 @@ class HiveApp:
             self.print(table)
             return
 
+        if text == "/mcp":
+            servers = self._mcp.servers()
+            if not servers:
+                self.print(t("mcp.none", self._lang))
+                return
+            table = Table(
+                title=t("mcp.title", self._lang), border_style="#FFC107"
+            )
+            table.add_column(t("mcp.col.server", self._lang), style="#FFC107")
+            table.add_column(t("mcp.col.tools", self._lang), justify="right")
+            for name, conn in servers.items():
+                table.add_row(name, str(len(conn.tools)))
+            self.print(table)
+            return
+
         if text.startswith("/model"):
             parts = text.split(None, 1)
             if len(parts) == 1:
-                self.print(t("model.current", self._lang).format(model=self._model))
+                # No argument — open the interactive model picker.
+                models = self._provider.list_models() if hasattr(self._provider, "list_models") else []
+                if not models:
+                    self.print(t("model.picker_none", self._lang))
+                    return
+                self._model_list = models
+                # Pre-select the current model if present, otherwise start at top.
+                try:
+                    self._model_idx = models.index(self._model)
+                except ValueError:
+                    self._model_idx = 0
+                self._model_panel_key = (-1, -1)
+                self._picking_model = True
+                self._welcome_width = -1
+                self.app.invalidate()
             else:
                 new_model = parts[1].strip()
                 if not new_model:
@@ -917,11 +1068,21 @@ class HiveApp:
         error: list[str | None] = [None]
         width = self._current_width()
 
+        mcp_tools = self._mcp.list_tools()
+        all_tools = AI_TOOLS + mcp_tools
+
+        def _tool_executor(name: str, args: dict) -> str:
+            if "__" in name:
+                return self._mcp.call_tool(name, args)
+            return run_tool(name, args)
+
         def _ai_thread() -> None:
             try:
                 result[0] = self._provider.chat(
                     [{"role": "system", "content": SYSTEM_PROMPT}] + self._conversation,
                     self._model,
+                    tools=all_tools,
+                    tool_executor=_tool_executor,
                 )
             except Exception as exc:
                 error[0] = str(exc)
@@ -963,8 +1124,26 @@ class HiveApp:
         threading.Thread(target=_ai_thread, daemon=True).start()
         threading.Thread(target=_anim_thread, daemon=True).start()
 
+    def _connect_mcp_server(self, config: MCPServerConfig) -> None:
+        """Connect to one MCP server in a background thread; print on error."""
+        try:
+            self._mcp.connect(config)
+            logger.info("MCP: connected to '%s'", config.name)
+        except Exception as exc:
+            self.print(t("mcp.error", self._lang).format(name=config.name, error=exc))
+
     def run(self):
         logger.debug("HiveApp started")
+        # Connect to enabled MCP servers in background threads so startup is
+        # non-blocking. Errors are printed to the output area once the app runs.
+        for raw in get_mcp_configs(self._cwd):
+            config = MCPServerConfig.from_dict(raw)
+            if config.enabled:
+                threading.Thread(
+                    target=self._connect_mcp_server,
+                    args=(config,),
+                    daemon=True,
+                ).start()
         try:
             self.app.run()
         finally:

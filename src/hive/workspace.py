@@ -223,6 +223,20 @@ def set_summarization_token_limit(cwd: Path, limit: int) -> None:
     save_config(cwd, config)
 
 
+def get_mcp_configs(cwd: Path) -> list[dict]:
+    """Read .hive/mcp.json, returning [] if missing."""
+    path = _hive_path(cwd) / "mcp.json"
+    if not path.exists():
+        return []
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def save_mcp_configs(cwd: Path, configs: list[dict]) -> None:
+    """Write .hive/mcp.json."""
+    path = _hive_path(cwd) / "mcp.json"
+    path.write_text(json.dumps(configs, indent=2), encoding="utf-8")
+
+
 def save_output(session: Session, lines: list[str]) -> None:
     """Write output lines as JSON-lines to the session output file."""
     session.output_path.write_text(

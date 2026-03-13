@@ -211,10 +211,19 @@ def test_handle_sessions_contains_session_id(hive_app):
 # ---------------------------------------------------------------------------
 
 
-def test_handle_model_no_arg_shows_current_model(hive_app):
+def test_handle_model_no_arg_opens_picker(hive_app, monkeypatch):
+    monkeypatch.setattr(hive_app._provider, "list_models", lambda: ["llama3.2", "mistral"])
     hive_app.handle_input("/model")
+    assert hive_app._picking_model is True
+    assert hive_app._model_list == ["llama3.2", "mistral"]
+
+
+def test_handle_model_no_arg_no_ollama_prints_message(hive_app, monkeypatch):
+    monkeypatch.setattr(hive_app._provider, "list_models", lambda: [])
+    hive_app.handle_input("/model")
+    assert hive_app._picking_model is False
     output = "\n".join(hive_app._output_lines)
-    assert hive_app._model in output
+    assert "Ollama" in output or "model" in output.lower()
 
 
 def test_handle_model_set_updates_model_attribute(hive_app):
@@ -228,11 +237,11 @@ def test_handle_model_set_prints_confirmation(hive_app):
     assert "mistral" in output
 
 
-def test_handle_model_trailing_space_shows_current(hive_app):
+def test_handle_model_trailing_space_opens_picker(hive_app, monkeypatch):
     # "/model " with trailing whitespace is treated same as "/model" by split(None,1)
+    monkeypatch.setattr(hive_app._provider, "list_models", lambda: ["llama3.2"])
     hive_app.handle_input("/model ")
-    output = "\n".join(hive_app._output_lines)
-    assert hive_app._model in output
+    assert hive_app._picking_model is True
 
 
 # ---------------------------------------------------------------------------

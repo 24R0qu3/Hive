@@ -193,6 +193,36 @@ def build_language_panel(lang_options: list, idx: int, width: int = 0) -> Panel:
     )
 
 
+def build_model_panel(
+    models: list[str], current: str, idx: int, lang: str = "en"
+) -> Panel:
+    """Model picker panel — lists available Ollama models with the current one marked."""
+    rows = []
+    for i, name in enumerate(models):
+        selected = i == idx
+        is_current = name == current
+        prefix = "▶ " if selected else "  "
+        label = f"{name}  [dim]✓[/dim]" if is_current else name
+        style = "bold #FFC107" if selected else ("dim" if not is_current else "")
+        rows.append(Text.from_markup(f"{prefix}{label}", style=style))
+
+    content = Group(
+        Text(""),
+        Text(t("model.picker_heading", lang), justify="center"),
+        Text(""),
+        *rows,
+        Text(""),
+        Text(t("model.picker_hint", lang), style="dim", justify="center"),
+        Text(""),
+    )
+    return Panel(
+        content,
+        title=f"[bold #FFC107]v{__version__}[/bold #FFC107]",
+        title_align="left",
+        border_style="#FFC107",
+    )
+
+
 def build_resume_panel(
     sessions: list[Session],
     idx: int,

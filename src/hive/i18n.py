@@ -22,7 +22,7 @@ _STRINGS: dict[str, dict[str, str]] = {
         "lang.change_later": "You can change this later with /language",
         # welcome
         "welcome.greeting": "Hello, {name}!",
-        "welcome.hint": "Enter · Shift+Enter newline · Shift+drag to select · Ctrl+C ×2 exit",
+        "welcome.hint": "Enter · Ctrl+J newline · Shift+drag to select · Ctrl+C ×2 exit",
         # resume picker
         "resume.heading": "Choose a session to resume:",
         "resume.hint": "↑ ↓ navigate · Enter resume · Esc cancel",
@@ -39,9 +39,18 @@ _STRINGS: dict[str, dict[str, str]] = {
         "model.current": "Model: {model}",
         "model.set": "Model set to {model}",
         "model.usage": "Usage: /model <name>   e.g. /model llama3.2",
+        "model.picker_heading": "Choose a model:",
+        "model.picker_hint": "↑ ↓ to navigate · Enter to select · Esc/Ctrl+C to cancel",
+        "model.picker_none": "No models found. Is Ollama running?",
         # AI
         "ai.busy": "Still thinking\u2026 please wait.",
         "ai.error": "Error: {error}",
+        # MCP
+        "mcp.title": "MCP Servers",
+        "mcp.col.server": "Server",
+        "mcp.col.tools": "Tools",
+        "mcp.none": "No MCP servers connected.",
+        "mcp.error": "MCP: failed to connect to '{name}': {error}",
         # exit hint
         "exit.resume": "To resume:  hive --resume {id}",
     },
@@ -57,10 +66,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "lang.change_later": "Später änderbar mit /language",
         # welcome
         "welcome.greeting": "Hallo, {name}!",
-        "welcome.hint": "Enter · Shift+Enter neue Zeile · Shift+Ziehen · Ctrl+C ×2 beenden",
+        "welcome.hint": "Enter · Ctrl+J neue Zeile · Shift+Ziehen · Ctrl+C ×2 beenden",
         # resume picker
         "resume.heading": "Sitzung zum Fortsetzen auswählen:",
-        "resume.hint": "↑ ↓ navigieren · Enter fortsetzen · Esc abbrechen",
+        "resume.hint": "↑ ↓ navigieren · Enter fortsetzen · Esc/Ctrl+C abbrechen",
         # sessions
         "sessions.title": "Sitzungen",
         "sessions.col.id": "ID",
@@ -74,9 +83,18 @@ _STRINGS: dict[str, dict[str, str]] = {
         "model.current": "Modell: {model}",
         "model.set": "Modell gesetzt auf {model}",
         "model.usage": "Verwendung: /model <name>   z.B. /model llama3.2",
+        "model.picker_heading": "Modell auswählen:",
+        "model.picker_hint": "↑ ↓ navigieren · Enter auswählen · Esc/Ctrl+C abbrechen",
+        "model.picker_none": "Keine Modelle gefunden. Läuft Ollama?",
         # AI
         "ai.busy": "Noch am Denken\u2026 bitte warten.",
         "ai.error": "Fehler: {error}",
+        # MCP
+        "mcp.title": "MCP-Server",
+        "mcp.col.server": "Server",
+        "mcp.col.tools": "Tools",
+        "mcp.none": "Keine MCP-Server verbunden.",
+        "mcp.error": "MCP: Verbindung zu '{name}' fehlgeschlagen: {error}",
         # exit hint
         "exit.resume": "Fortsetzen mit:  hive --resume {id}",
     },

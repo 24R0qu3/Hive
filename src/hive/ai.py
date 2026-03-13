@@ -144,5 +144,23 @@ class OllamaProvider:
             ) from exc
 
 
+    def list_models(self) -> list[str]:
+        """Return model names available in Ollama, sorted alphabetically.
+
+        Returns an empty list if Ollama is unreachable or returns an error.
+        """
+        req = urllib.request.Request(
+            f"{self.base_url}/api/tags",
+            headers={"Accept": "application/json"},
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                body = json.loads(resp.read())
+                return sorted(m["name"] for m in body.get("models", []))
+        except Exception:
+            return []
+
+
 class _ToolsNotSupported(Exception):
     """Raised internally when Ollama signals the model doesn't support tools."""
