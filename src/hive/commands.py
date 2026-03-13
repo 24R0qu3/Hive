@@ -56,8 +56,11 @@ COMMAND_REGISTRY: list[CommandDoc] = [
     ),
     CommandDoc(
         name="/mcp",
-        usage="/mcp",
-        description="List connected MCP servers and their available tools.",
+        usage="/mcp [manage]",
+        description=(
+            "List connected MCP servers and their tools. "
+            "Use '/mcp manage' to open the interactive server manager."
+        ),
     ),
 ]
 

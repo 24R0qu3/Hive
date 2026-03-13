@@ -212,7 +212,9 @@ def test_handle_sessions_contains_session_id(hive_app):
 
 
 def test_handle_model_no_arg_opens_picker(hive_app, monkeypatch):
-    monkeypatch.setattr(hive_app._provider, "list_models", lambda: ["llama3.2", "mistral"])
+    monkeypatch.setattr(
+        hive_app._provider, "list_models", lambda: ["llama3.2", "mistral"]
+    )
     hive_app.handle_input("/model")
     assert hive_app._picking_model is True
     assert hive_app._model_list == ["llama3.2", "mistral"]

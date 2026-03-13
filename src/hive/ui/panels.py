@@ -11,6 +11,7 @@ from rich.text import Text
 
 from hive import __version__
 from hive.i18n import t
+from hive.mcp import MCPServerConfig
 from hive.workspace import Session
 
 _WIDE_THRESHOLD = 80
@@ -255,4 +256,76 @@ def build_resume_panel(
         title=f"[bold #FFC107]v{__version__}[/bold #FFC107]",
         title_align="left",
         border_style="#FFC107",
+    )
+
+
+def build_mcp_panel(
+    configs: list[MCPServerConfig],
+    connected_names: set[str],
+    reconnecting_names: set[str],
+    idx: int,
+    confirm_delete_name: str | None = None,
+    lang: str = "en",
+) -> Panel:
+    """Interactive MCP server management panel.
+
+    Shows all configured servers with their live connection status.
+    The selected row is highlighted; confirm_delete_name shows a warning line.
+    """
+    rows = []
+    for i, config in enumerate(configs):
+        selected = i == idx
+        prefix = "▶ " if selected else "  "
+        style = "bold #FFC107" if selected else ""
+
+        name_part = config.name
+        enabled_part = "" if config.enabled else "  [dim][disabled][/dim]"
+
+        if config.name in reconnecting_names:
+            status = t("mcp.manage.status.reconnecting", lang)
+            status_style = "dim #FFC107"
+        elif config.name in connected_names:
+            status = t("mcp.manage.status.connected", lang)
+            status_style = "bold green"
+        else:
+            status = t("mcp.manage.status.disconnected", lang)
+            status_style = "dim red"
+
+        row = Text.assemble(
+            (prefix, style),
+            (name_part, style),
+            (enabled_part, ""),
+            ("  ", ""),
+            (status, status_style),
+        )
+        rows.append(row)
+
+    content_parts: list = [
+        Text(""),
+        Text(t("mcp.manage.heading", lang), justify="center"),
+        Text(""),
+        *rows,
+        Text(""),
+    ]
+
+    if confirm_delete_name is not None:
+        content_parts.append(
+            Text(
+                t("mcp.manage.confirm_delete", lang).format(name=confirm_delete_name),
+                style="dim red",
+                justify="center",
+            )
+        )
+        content_parts.append(Text(""))
+
+    content_parts.append(
+        Text(t("mcp.manage.hint", lang), style="dim", justify="center")
+    )
+    content_parts.append(Text(""))
+
+    content = Group(*content_parts)
+    return Panel(
+        content,
+        border_style="#FFC107",
+        title=f"[bold #FFC107]v{__version__}[/bold #FFC107]",
     )

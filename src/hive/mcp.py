@@ -3,9 +3,38 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import os
+import re
 import threading
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
+
+
+def _expand_env(value: str, extra: dict[str, str]) -> str:
+    """Expand $VAR, ${VAR} (Unix) and $env:VAR (PowerShell style) in value."""
+    merged = {**os.environ, **extra}
+    # PowerShell: $env:VAR
+    value = re.sub(
+        r"\$env:([A-Za-z_][A-Za-z0-9_]*)",
+        lambda m: merged.get(m.group(1), m.group(0)),
+        value,
+    )
+    # Unix: ${VAR}
+    value = re.sub(
+        r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}",
+        lambda m: merged.get(m.group(1), m.group(0)),
+        value,
+    )
+    # Unix: $VAR (not followed by word char)
+    value = re.sub(
+        r"\$([A-Za-z_][A-Za-z0-9_]*)(?!\w)",
+        lambda m: merged.get(m.group(1), m.group(0)),
+        value,
+    )
+    return value
 
 
 @dataclass
@@ -13,6 +42,7 @@ class MCPServerConfig:
     name: str
     command: str
     args: list[str] = field(default_factory=list)
+    env: dict[str, str] = field(default_factory=dict)
     enabled: bool = True
 
     def to_dict(self) -> dict:
@@ -20,6 +50,7 @@ class MCPServerConfig:
             "name": self.name,
             "command": self.command,
             "args": self.args,
+            "env": self.env,
             "enabled": self.enabled,
         }
 
@@ -29,6 +60,7 @@ class MCPServerConfig:
             name=d["name"],
             command=d["command"],
             args=d.get("args", []),
+            env=d.get("env", {}),
             enabled=d.get("enabled", True),
         )
 
@@ -36,10 +68,17 @@ class MCPServerConfig:
 class _ServerConn:
     """Holds a live MCP session and its cached tool list."""
 
-    def __init__(self, session, tools: list, exit_stack: AsyncExitStack) -> None:
+    def __init__(
+        self,
+        session,
+        tools: list,
+        exit_stack: AsyncExitStack,
+        config: MCPServerConfig,
+    ) -> None:
         self.session = session
         self.tools = tools  # list[mcp.types.Tool]
         self.exit_stack = exit_stack
+        self.config = config
 
 
 class MCPManager:
@@ -57,6 +96,13 @@ class MCPManager:
         )
         self._thread.start()
         self._conns: dict[str, _ServerConn] = {}
+        self._retry_counts: dict[str, int] = {}
+        self._shutdown_event = threading.Event()
+        self._lock = threading.Lock()
+        self._monitor_thread = threading.Thread(
+            target=self._health_monitor, daemon=True, name="mcp-health-monitor"
+        )
+        self._monitor_thread.start()
 
     # ------------------------------------------------------------------
     # Public synchronous API
@@ -73,11 +119,32 @@ class MCPManager:
         """Disconnect from a server and clean up its resources."""
         if name not in self._conns:
             return
-        conn = self._conns.pop(name)
-        future = asyncio.run_coroutine_threadsafe(
-            conn.exit_stack.aclose(), self._loop
-        )
+        with self._lock:
+            conn = self._conns.pop(name, None)
+        if conn is None:
+            return
+        future = asyncio.run_coroutine_threadsafe(conn.exit_stack.aclose(), self._loop)
         future.result(timeout=timeout)
+
+    def shutdown(self, timeout: int = 5) -> None:
+        """Signal the health monitor to stop, then disconnect all servers."""
+        self._shutdown_event.set()
+        self._monitor_thread.join(timeout=timeout)
+        for name in list(self._conns.keys()):
+            try:
+                self.disconnect(name)
+            except Exception:
+                pass
+
+    def reconnect(self, name: str, timeout: int = 15) -> None:
+        """Disconnect and reconnect the named server using its stored config."""
+        with self._lock:
+            if name not in self._conns:
+                raise KeyError(f"No MCP server connected with name '{name}'")
+            config = self._conns[name].config
+        self.disconnect(name)
+        self._retry_counts[name] = 0
+        self.connect(config, timeout)
 
     def list_tools(self) -> list[dict]:
         """Return Ollama-compatible tool schemas for all connected servers.
@@ -128,11 +195,72 @@ class MCPManager:
         from mcp.client.stdio import StdioServerParameters, stdio_client
 
         stack = AsyncExitStack()
-        params = StdioServerParameters(command=config.command, args=config.args)
+        merged_env = {**os.environ, **config.env}
+        expanded_command = _expand_env(config.command, config.env)
+        expanded_args = [_expand_env(a, config.env) for a in config.args]
+        params = StdioServerParameters(
+            command=expanded_command,
+            args=expanded_args,
+            env=merged_env,
+        )
         read, write = await stack.enter_async_context(stdio_client(params))
         session = await stack.enter_async_context(ClientSession(read, write))
         await session.initialize()
         result = await session.list_tools()
-        self._conns[config.name] = _ServerConn(
-            session=session, tools=result.tools, exit_stack=stack
-        )
+        with self._lock:
+            self._conns[config.name] = _ServerConn(
+                session=session, tools=result.tools, exit_stack=stack, config=config
+            )
+
+    def _probe(self, conn: _ServerConn) -> bool:
+        """Return False if the server session is no longer responsive."""
+        try:
+            future = asyncio.run_coroutine_threadsafe(
+                asyncio.wait_for(conn.session.list_tools(), timeout=1.0),
+                self._loop,
+            )
+            future.result(timeout=2)
+            return True
+        except Exception:
+            return False
+
+    def _health_monitor(self) -> None:
+        """Background daemon: detect dead servers and reconnect with exponential backoff."""
+        while not self._shutdown_event.wait(timeout=5.0):
+            with self._lock:
+                snapshot = list(self._conns.items())
+            for name, conn in snapshot:
+                if self._shutdown_event.is_set():
+                    break
+                try:
+                    alive = self._probe(conn)
+                except Exception:
+                    alive = False
+                if not alive:
+                    attempt = self._retry_counts.get(name, 0) + 1
+                    self._retry_counts[name] = attempt
+                    if attempt <= 3:
+                        delay = min(2**attempt, 30)
+                        logger.warning(
+                            "MCP server '%s' appears dead (attempt %d/3), reconnecting in %ds",
+                            name,
+                            attempt,
+                            delay,
+                        )
+                        self._shutdown_event.wait(timeout=delay)
+                        if not self._shutdown_event.is_set():
+                            try:
+                                future = asyncio.run_coroutine_threadsafe(
+                                    self._connect_async(conn.config), self._loop
+                                )
+                                future.result(timeout=15)
+                            except Exception as exc:
+                                logger.error(
+                                    "MCP reconnect failed for '%s': %s", name, exc
+                                )
+                    else:
+                        logger.error(
+                            "MCP server '%s' failed to reconnect after 3 attempts, giving up.",
+                            name,
+                        )
+                        self._retry_counts.pop(name, None)

@@ -13,7 +13,7 @@ from prompt_toolkit.filters import Condition, has_focus
 from prompt_toolkit.formatted_text import ANSI, to_formatted_text
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import Layout
-from prompt_toolkit.layout.containers import ConditionalContainer, HSplit, Window
+from prompt_toolkit.layout.containers import HSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.lexers import Lexer
 from prompt_toolkit.mouse_events import MouseEvent, MouseEventType
@@ -24,9 +24,9 @@ from rich.table import Table
 
 from hive import ai
 from hive.commands import AI_TOOLS, COMMAND_NAMES, SYSTEM_PROMPT, run_tool
-from hive.mcp import MCPManager, MCPServerConfig
 from hive.i18n import LANG_OPTIONS, t
 from hive.log import add_session_handler
+from hive.mcp import MCPManager, MCPServerConfig
 from hive.summarizer import SUMMARY_PREFIX, RollingSummarizer
 from hive.ui.history import HistoryManager
 from hive.ui.panels import (
@@ -61,7 +61,6 @@ from hive.workspace import (
 )
 
 logger = logging.getLogger(__name__)
-
 
 
 class _ScrollableWindow(Window):
@@ -302,10 +301,12 @@ class HiveApp:
         )
         # Blocks history nav (but not name — user is typing freely there)
         _not_picker = ~Condition(
-            lambda: self._resuming
-            or self._picking_language
-            or self._picking_model
-            or self._awaiting_name
+            lambda: (
+                self._resuming
+                or self._picking_language
+                or self._picking_model
+                or self._awaiting_name
+            )
         )
 
         # -- Name input: Enter saves name, transitions to next modal --
@@ -1010,9 +1011,7 @@ class HiveApp:
             if not servers:
                 self.print(t("mcp.none", self._lang))
                 return
-            table = Table(
-                title=t("mcp.title", self._lang), border_style="#FFC107"
-            )
+            table = Table(title=t("mcp.title", self._lang), border_style="#FFC107")
             table.add_column(t("mcp.col.server", self._lang), style="#FFC107")
             table.add_column(t("mcp.col.tools", self._lang), justify="right")
             for name, conn in servers.items():
@@ -1024,7 +1023,11 @@ class HiveApp:
             parts = text.split(None, 1)
             if len(parts) == 1:
                 # No argument — open the interactive model picker.
-                models = self._provider.list_models() if hasattr(self._provider, "list_models") else []
+                models = (
+                    self._provider.list_models()
+                    if hasattr(self._provider, "list_models")
+                    else []
+                )
                 if not models:
                     self.print(t("model.picker_none", self._lang))
                     return

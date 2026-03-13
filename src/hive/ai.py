@@ -42,7 +42,7 @@ class AIProvider(Protocol):
         model: str,
         tools: list[dict] | None = None,
         tool_executor: Callable[[str, dict], str] | None = None,
-    ) -> str:
+    ) -> tuple[str, bool]:
         """Send a message list and return the assistant reply as a string.
 
         If *tools* and *tool_executor* are provided the implementation should
@@ -67,12 +67,16 @@ class OllamaProvider:
         model: str,
         tools: list[dict] | None = None,
         tool_executor: Callable[[str, dict], str] | None = None,
-    ) -> str:
+    ) -> tuple[str, bool]:
+        """Send *messages* to Ollama and return ``(reply, fallback)``.
+
+        *fallback* is ``True`` when the model does not support tool calling and
+        the request was retried without tools; ``False`` otherwise.
+        """
         try:
-            return self._chat_with_tools(messages, model, tools, tool_executor)
+            return self._chat_with_tools(messages, model, tools, tool_executor), False
         except _ToolsNotSupported:
-            # Model doesn't support tool calling — retry without tools.
-            return self._chat_with_tools(messages, model, None, None)
+            return self._chat_with_tools(messages, model, None, None), True
 
     def _chat_with_tools(
         self,
@@ -142,7 +146,6 @@ class OllamaProvider:
             raise ConnectionError(
                 f"Ollama not reachable at {self.base_url}: {exc}"
             ) from exc
-
 
     def list_models(self) -> list[str]:
         """Return model names available in Ollama, sorted alphabetically.
