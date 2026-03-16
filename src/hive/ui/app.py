@@ -509,7 +509,9 @@ class HiveApp:
                 threading.Thread(
                     target=lambda: self._mcp.disconnect(config.name), daemon=True
                 ).start()
-                self.print(t("mcp.manage.disabled", self._lang).format(name=config.name))
+                self.print(
+                    t("mcp.manage.disabled", self._lang).format(name=config.name)
+                )
             self._mcp_panel_key = (-1, -1)
             event.app.invalidate()
 
@@ -581,7 +583,9 @@ class HiveApp:
             self.print(t("mcp.manage.add.prompt_name", self._lang))
             event.app.invalidate()
 
-        @kb.add("enter", filter=has_focus(self.input_field) & _mcp_adding_active, eager=True)
+        @kb.add(
+            "enter", filter=has_focus(self.input_field) & _mcp_adding_active, eager=True
+        )
         def mcp_add_step_submit(event):
             text = self.input_field.text.strip()
             step_keys = ["name", "command", "args", "env"]
@@ -599,7 +603,11 @@ class HiveApp:
                 event.app.invalidate()
                 return
             # All steps done — build config
-            raw_args = self._mcp_add_data.get("args", "").split() if self._mcp_add_data.get("args") else []
+            raw_args = (
+                self._mcp_add_data.get("args", "").split()
+                if self._mcp_add_data.get("args")
+                else []
+            )
             raw_env: dict[str, str] = {}
             for pair in (self._mcp_add_data.get("env", "") or "").split():
                 if "=" in pair:
@@ -620,7 +628,11 @@ class HiveApp:
             self._mcp_panel_key = (-1, -1)
             event.app.invalidate()
 
-        @kb.add("escape", filter=has_focus(self.input_field) & _mcp_adding_active, eager=True)
+        @kb.add(
+            "escape",
+            filter=has_focus(self.input_field) & _mcp_adding_active,
+            eager=True,
+        )
         def mcp_add_cancel(event):
             self._mcp_adding = False
             self._mcp_add_step = 0

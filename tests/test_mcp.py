@@ -126,8 +126,20 @@ def test_get_mcp_configs_returns_empty_list_when_no_workspace(tmp_path):
 def test_save_and_get_mcp_configs_roundtrip(tmp_path):
     create_workspace(tmp_path)
     configs = [
-        {"name": "alpha", "command": "node", "args": ["server.js"], "env": {}, "enabled": True},
-        {"name": "beta", "command": "python", "args": ["-m", "srv"], "env": {"X": "1"}, "enabled": False},
+        {
+            "name": "alpha",
+            "command": "node",
+            "args": ["server.js"],
+            "env": {},
+            "enabled": True,
+        },
+        {
+            "name": "beta",
+            "command": "python",
+            "args": ["-m", "srv"],
+            "env": {"X": "1"},
+            "enabled": False,
+        },
     ]
     save_mcp_configs(tmp_path, configs)
     loaded = get_mcp_configs(tmp_path)
@@ -136,7 +148,9 @@ def test_save_and_get_mcp_configs_roundtrip(tmp_path):
 
 def test_save_mcp_configs_writes_valid_json(tmp_path):
     create_workspace(tmp_path)
-    configs = [{"name": "srv", "command": "cmd", "args": [], "env": {}, "enabled": True}]
+    configs = [
+        {"name": "srv", "command": "cmd", "args": [], "env": {}, "enabled": True}
+    ]
     save_mcp_configs(tmp_path, configs)
     raw = (tmp_path / ".hive" / "mcp.json").read_text(encoding="utf-8")
     parsed = json.loads(raw)
@@ -145,8 +159,14 @@ def test_save_mcp_configs_writes_valid_json(tmp_path):
 
 def test_save_mcp_configs_overwrites_previous(tmp_path):
     create_workspace(tmp_path)
-    save_mcp_configs(tmp_path, [{"name": "old", "command": "x", "args": [], "env": {}, "enabled": True}])
-    save_mcp_configs(tmp_path, [{"name": "new", "command": "y", "args": [], "env": {}, "enabled": True}])
+    save_mcp_configs(
+        tmp_path,
+        [{"name": "old", "command": "x", "args": [], "env": {}, "enabled": True}],
+    )
+    save_mcp_configs(
+        tmp_path,
+        [{"name": "new", "command": "y", "args": [], "env": {}, "enabled": True}],
+    )
     loaded = get_mcp_configs(tmp_path)
     assert len(loaded) == 1
     assert loaded[0]["name"] == "new"

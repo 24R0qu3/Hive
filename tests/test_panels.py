@@ -300,7 +300,6 @@ def test_build_resume_panel_shows_last_message(tmp_path):
 
 def test_build_mcp_panel_returns_panel():
     # with empty configs list, should still return a Panel
-    from hive.mcp import MCPServerConfig
 
     panel = build_mcp_panel([], set(), set(), 0)
     assert isinstance(panel, Panel)
@@ -353,14 +352,15 @@ def test_build_mcp_panel_confirm_delete_shown():
     from hive.mcp import MCPServerConfig
 
     configs = [MCPServerConfig(name="srv", command="cmd")]
-    output = _render(build_mcp_panel(configs, set(), set(), 0, confirm_delete_name="srv"))
+    output = _render(
+        build_mcp_panel(configs, set(), set(), 0, confirm_delete_name="srv")
+    )
     assert "srv" in output
     # confirm message should appear
     assert "Delete" in output or "delete" in output.lower()
 
 
 def test_build_mcp_panel_hint_contains_esc():
-    from hive.mcp import MCPServerConfig
 
     output = _render(build_mcp_panel([], set(), set(), 0))
     assert "Esc" in output
