@@ -43,7 +43,6 @@ from hive.workspace import (
     DEFAULT_SUMMARIZATION_TOKEN_LIMIT,
     Session,
     create_workspace,
-    get_agent_configs,
     get_language,
     get_mcp_configs,
     get_model,
@@ -242,12 +241,15 @@ class HiveApp:
 
         # Agent add wizard state
         self._agent_adding: bool = False
-        self._agent_add_step: int = 0  # 0=name,1=description,2=system_prompt,3=tools,4=max_steps
+        self._agent_add_step: int = (
+            0  # 0=name,1=description,2=system_prompt,3=tools,4=max_steps
+        )
         self._agent_add_data: dict = {}
 
         # --- output state ---
         self._welcome_lines: list[str] = []
         self._welcome_width: int = -1
+        self._welcome_mcp_key: tuple = ()
         self._output_lines: list[str] = []
         self._scroll_offset: int = 0
 
@@ -1099,12 +1101,20 @@ class HiveApp:
                 )
             return _slice(self._welcome_lines)
 
-        if width != self._welcome_width:
+        mcp_names = sorted(self._mcp.servers().keys())
+        welcome_key = (width, tuple(mcp_names))
+        if welcome_key != (self._welcome_width, self._welcome_mcp_key):
             self._welcome_width = width
+            self._welcome_mcp_key = tuple(mcp_names)
             session_id = self._session.id if self._session else None
             self._welcome_lines = self._render_to_lines(
                 build_welcome(
-                    width, self._cwd, session_id, self._user_name, self._lang
+                    width,
+                    self._cwd,
+                    session_id,
+                    self._user_name,
+                    self._lang,
+                    mcp_servers=mcp_names if mcp_names else None,
                 ),
                 width,
             )
@@ -1537,11 +1547,15 @@ class HiveApp:
 
         import platform as _platform
         import subprocess as _sp
+
         _git_branch = ""
         try:
             _r = _sp.run(
                 ["git", "branch", "--show-current"],
-                capture_output=True, text=True, cwd=self._cwd, timeout=5,
+                capture_output=True,
+                text=True,
+                cwd=self._cwd,
+                timeout=5,
             )
             _git_branch = _r.stdout.strip()
         except Exception:
@@ -1603,6 +1617,7 @@ class HiveApp:
             return run_tool(name, args, cwd=self._cwd)
 
         import platform as _platform
+
         system_content = (
             SYSTEM_PROMPT
             + f"\n\nCurrent working directory: {self._cwd}"
@@ -1612,7 +1627,8 @@ class HiveApp:
         def _ai_thread() -> None:
             try:
                 reply, tools_unsupported = self._provider.chat(
-                    [{"role": "system", "content": system_content}] + self._conversation,
+                    [{"role": "system", "content": system_content}]
+                    + self._conversation,
                     self._model,
                     tools=all_tools,
                     tool_executor=_tool_executor,

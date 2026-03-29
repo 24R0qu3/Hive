@@ -77,8 +77,7 @@ class AgentRunner:
         if definition.tools is not None:
             allowed = set(definition.tools)
             filtered_tools: list[dict] | None = [
-                t for t in all_tools
-                if t.get("function", {}).get("name", "") in allowed
+                t for t in all_tools if t.get("function", {}).get("name", "") in allowed
             ]
         else:
             filtered_tools = all_tools or None

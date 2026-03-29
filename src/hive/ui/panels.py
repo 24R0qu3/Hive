@@ -42,6 +42,7 @@ def build_welcome(
     session_id: str | None = None,
     name: str | None = None,
     lang: str = "en",
+    mcp_servers: list[str] | None = None,
 ) -> Panel:
     """Build the welcome panel, showing the honeycomb only on wide terminals."""
     logo = Text.assemble(
@@ -55,6 +56,11 @@ def build_welcome(
 
     inner_width = max(1, width - 4)
 
+    mcp_line: Text | None = None
+    if mcp_servers:
+        names = ", ".join(mcp_servers)
+        mcp_line = Text(f"⬡ {names}", style="dim #FFC107")
+
     if cwd is not None and session_id is not None:
         session_tag = f"#{session_id}"
         cwd_str = str(cwd)
@@ -67,18 +73,20 @@ def build_welcome(
             (" " * gap, ""),
             (session_tag, "dim #FFC107"),
         )
-        hints: object = Group(
-            info_line,
-            Text(t("welcome.hint", lang), style="dim", justify="left"),
-        )
+        hint_parts: list = [info_line]
+        if mcp_line:
+            hint_parts.append(mcp_line)
+        hint_parts.append(Text(t("welcome.hint", lang), style="dim", justify="left"))
+        hints: object = Group(*hint_parts)
     elif cwd is not None:
         cwd_str = str(cwd)
         if len(cwd_str) > inner_width - 1 and inner_width > 3:
             cwd_str = "…" + cwd_str[-(inner_width - 2) :]
-        hints = Group(
-            Text(cwd_str, style="dim"),
-            Text(t("welcome.hint", lang), style="dim", justify="left"),
-        )
+        hint_parts = [Text(cwd_str, style="dim")]
+        if mcp_line:
+            hint_parts.append(mcp_line)
+        hint_parts.append(Text(t("welcome.hint", lang), style="dim", justify="left"))
+        hints = Group(*hint_parts)
     else:
         hints = Text(t("welcome.hint", lang), style="dim", justify="left")
 

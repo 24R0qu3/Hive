@@ -82,6 +82,8 @@ Type a command in the input field and press `Enter`:
 | `/agent list` | List all available agents |
 | `/agent <name> <goal>` | Run a named agent on a goal |
 | `/agent add` | Define a new custom agent via a step-by-step wizard |
+| `/agent delete <name>` | Delete a user-defined agent |
+| `/agent edit <name>` | Open a user-defined agent's JSON in your editor |
 | `/exit` | Exit Hive |
 
 **Keyboard shortcuts in the input field:**
@@ -154,7 +156,18 @@ Agents are goal-oriented AI loops that autonomously plan, call tools, observe re
 /agent shell-task create a new branch called feature/auth and scaffold a basic FastAPI app
 ```
 
-The agent shows each step in the output area as it works. Press `Ctrl+C` to abort.
+The agent shows each step with a `[N/max]` counter in the output area as it works. Each tool call shows the tool name, arguments preview, and result. Press `Ctrl+C` to abort a running agent.
+
+The agent also receives context automatically: current OS, working directory, and current git branch (if in a git repo).
+
+### Managing agents
+
+| Command | Description |
+|---|---|
+| `/agent list` | Show all available agents (built-in + custom) |
+| `/agent add` | Start a step-by-step wizard to create a new agent |
+| `/agent delete <name>` | Remove a user-defined agent |
+| `/agent edit <name>` | Open the agent's JSON in your system editor (`$EDITOR`) |
 
 ### Adding a custom agent
 
@@ -186,6 +199,20 @@ Place the file in `.hive/agents/my-agent.json` and it will appear in `/agent lis
 ### MCP tools in agents
 
 Agents have access to all connected MCP servers. To restrict an agent to specific MCP tools, list the prefixed names (e.g. `gitmcp__commit`, `gitscribe__generate_commit_message`) in the `tools` field.
+
+## MCP servers
+
+Hive connects to external [MCP](https://modelcontextprotocol.io) servers and exposes their tools to the AI and to agents.
+
+### Connecting a server
+
+Run `/mcp manage` and press `A` to add a new server. You will be prompted for the executable path, arguments, and optional environment variables. Servers are stored in `.hive/mcp.json`.
+
+Connected servers are shown in the welcome panel (`⬡ gitmcp, gitscribe`) and update live as servers connect. Use `/mcp` to see a tool count per server.
+
+### Tool naming
+
+Tools from MCP servers are prefixed with the server name: `gitmcp__commit`, `gitscribe__generate_commit_message`, etc. This prevents collisions and lets you restrict agents to specific servers via the `tools` field.
 
 ## Log file location
 
