@@ -67,11 +67,13 @@ COMMAND_REGISTRY: list[CommandDoc] = [
     ),
     CommandDoc(
         name="/agent",
-        usage="/agent <name> <goal>  |  /agent list  |  /agent add",
+        usage="/agent <name> <goal>  |  /agent list  |  /agent add  |  /agent delete <name>  |  /agent edit <name>",
         description=(
             "Run a named agent on a goal. "
             "Use '/agent list' to see available agents, "
-            "'/agent add' to define a new one."
+            "'/agent add' to define a new one, "
+            "'/agent delete' to remove one, "
+            "'/agent edit' to open its JSON in your editor."
         ),
         notes=(
             "Agents run autonomously using tools until the goal is complete "

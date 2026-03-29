@@ -1372,6 +1372,14 @@ class HiveApp:
                 if self.app.is_running:
                     self.app.invalidate()
                 return
+            if sub == "delete":
+                name = parts[2].strip() if len(parts) > 2 else ""
+                self._cmd_agent_delete(name)
+                return
+            if sub == "edit":
+                name = parts[2].strip() if len(parts) > 2 else ""
+                self._cmd_agent_edit(name)
+                return
             goal = parts[2].strip() if len(parts) > 2 else ""
             if not goal:
                 self.print(
@@ -1400,6 +1408,79 @@ class HiveApp:
             tools_str = ", ".join(defn.tools) if defn.tools is not None else "all"
             table.add_row(defn.name, defn.description, tools_str, str(defn.max_steps))
         self.print(table)
+
+    def _cmd_agent_delete(self, name: str) -> None:
+        from hive.agent import load_agent_definitions
+        from hive.agents import BUILTIN_AGENTS
+        from hive.workspace import delete_agent_config
+
+        if not name:
+            self.print("[yellow]Usage:[/yellow] /agent delete <name>")
+            return
+        builtin_names = {a.name for a in BUILTIN_AGENTS}
+        if name in builtin_names:
+            self.print(
+                f"[red]Cannot delete built-in agent '{name}'.[/red] "
+                "Built-in agents are part of Hive."
+            )
+            return
+        definitions = load_agent_definitions(self._cwd)
+        if name not in definitions:
+            self.print(
+                f"[red]Unknown agent '{name}'.[/red] "
+                "Use '/agent list' to see available agents."
+            )
+            return
+        delete_agent_config(self._cwd, name)
+        self.print(f"[#FFC107]Agent '{name}' deleted.[/#FFC107]")
+
+    def _cmd_agent_edit(self, name: str) -> None:
+        import os
+        import platform
+        import subprocess
+
+        from hive.agent import load_agent_definitions
+        from hive.agents import BUILTIN_AGENTS
+
+        if not name:
+            self.print("[yellow]Usage:[/yellow] /agent edit <name>")
+            return
+        builtin_names = {a.name for a in BUILTIN_AGENTS}
+        if name in builtin_names:
+            self.print(
+                f"[yellow]'{name}' is a built-in agent.[/yellow] "
+                f"To customise it, copy it to .hive/agents/{name}.json first:\n"
+                f"  /agent list  — view its definition\n"
+                f"  /agent add   — recreate it with your changes"
+            )
+            return
+        definitions = load_agent_definitions(self._cwd)
+        if name not in definitions:
+            self.print(
+                f"[red]Unknown agent '{name}'.[/red] "
+                "Use '/agent list' to see available agents."
+            )
+            return
+        agent_path = self._cwd / ".hive" / "agents" / f"{name}.json"
+        if not agent_path.exists():
+            self.print(f"[red]Agent file not found: {agent_path}[/red]")
+            return
+        editor = (
+            os.environ.get("EDITOR")
+            or os.environ.get("VISUAL")
+            or ("notepad" if platform.system() == "Windows" else "nano")
+        )
+        try:
+            subprocess.Popen([editor, str(agent_path)])
+            self.print(
+                f"[#FFC107]Opened '{name}' in {editor}.[/#FFC107] "
+                "Restart Hive to apply changes."
+            )
+        except Exception as exc:
+            self.print(
+                f"[red]Could not open editor ({exc}).[/red]\n"
+                f"Edit manually: {agent_path}"
+            )
 
     def _start_agent(self, agent_name: str, goal: str) -> None:
         from hive.agent import AgentRunner, AgentStep, load_agent_definitions
