@@ -147,6 +147,38 @@ class OllamaProvider:
                 f"Ollama not reachable at {self.base_url}: {exc}"
             ) from exc
 
+    def chat_step(
+        self,
+        messages: list[dict],
+        model: str,
+        tools: list[dict] | None = None,
+    ) -> tuple[str, list[dict]]:
+        """Make exactly ONE model call and return ``(text, tool_calls)``.
+
+        Does NOT execute tools and does NOT loop.  If the model rejects the
+        tools payload, the call is retried without tools and an empty list is
+        returned for *tool_calls*.
+        """
+        try:
+            return self._chat_step_raw(messages, model, tools)
+        except _ToolsNotSupported:
+            text, _ = self._chat_step_raw(messages, model, None)
+            return text, []
+
+    def _chat_step_raw(
+        self,
+        messages: list[dict],
+        model: str,
+        tools: list[dict] | None,
+    ) -> tuple[str, list[dict]]:
+        payload: dict = {"model": model, "messages": messages, "stream": False}
+        if tools:
+            payload["tools"] = tools
+        data = self._post(payload)
+        msg = data.get("message", {})
+        tool_calls = msg.get("tool_calls") or []
+        return msg.get("content") or "", tool_calls
+
     def list_models(self) -> list[str]:
         """Return model names available in Ollama, sorted alphabetically.
 

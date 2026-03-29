@@ -65,6 +65,19 @@ COMMAND_REGISTRY: list[CommandDoc] = [
             "Use '/mcp manage' to open the interactive server manager."
         ),
     ),
+    CommandDoc(
+        name="/agent",
+        usage="/agent <name> <goal>  |  /agent list  |  /agent add",
+        description=(
+            "Run a named agent on a goal. "
+            "Use '/agent list' to see available agents, "
+            "'/agent add' to define a new one."
+        ),
+        notes=(
+            "Agents run autonomously using tools until the goal is complete "
+            "or the step limit is reached. Press Ctrl+C to abort a running agent."
+        ),
+    ),
 ]
 
 # Bare command names — used for autocomplete and coloring in the TUI.

@@ -77,6 +77,11 @@ Type a command in the input field and press `Enter`:
 | `/language` | Re-open the language picker to change the project language |
 | `/name` | Change your display name |
 | `/model <name>` | Set the AI model for this session (e.g. `/model mistral`) |
+| `/mcp` | List connected MCP servers and their tools |
+| `/mcp manage` | Open the interactive MCP server manager |
+| `/agent list` | List all available agents |
+| `/agent <name> <goal>` | Run a named agent on a goal |
+| `/agent add` | Define a new custom agent via a step-by-step wizard |
 | `/exit` | Exit Hive |
 
 **Keyboard shortcuts in the input field:**
@@ -86,7 +91,8 @@ Type a command in the input field and press `Enter`:
 | `↑` / `↓` | Navigate command history (or move cursor in multi-line input) |
 | `Ctrl+J` | Insert a newline (multi-line input) |
 | `PageUp` / `PageDown` | Scroll through output |
-| `Ctrl+C` / `Ctrl+D` | Exit |
+| `Ctrl+C` | Abort a running agent (first press), or exit (press twice) |
+| `Ctrl+D` | Exit |
 
 ## Workspace
 
@@ -131,6 +137,55 @@ class AIProvider(Protocol):
 ```
 
 Pass any object satisfying this protocol as `provider` when constructing `HiveApp` to use an alternative backend (OpenAI-compatible APIs, mock providers for testing, etc.).
+
+## Agents
+
+Agents are goal-oriented AI loops that autonomously plan, call tools, observe results, and repeat until the goal is complete or a step limit is reached.
+
+### Built-in agents
+
+| Agent | Description | Tools |
+|---|---|---|
+| `shell-task` | Execute multi-step shell operations to accomplish a stated goal | `shell` |
+
+### Running an agent
+
+```
+/agent shell-task create a new branch called feature/auth and scaffold a basic FastAPI app
+```
+
+The agent shows each step in the output area as it works. Press `Ctrl+C` to abort.
+
+### Adding a custom agent
+
+Run `/agent add` to start an interactive wizard. You will be prompted for:
+
+1. **Name** — identifier used in `/agent <name> <goal>`
+2. **Description** — shown in `/agent list`
+3. **System prompt** — instructions for the agent (use `Ctrl+J` for newlines)
+4. **Tools** — comma-separated tool names to restrict the agent to (empty = all tools)
+5. **Max steps** — hard cap on autonomous iterations (default: 10)
+
+Custom agents are saved to `.hive/agents/<name>.json` and can be version-controlled alongside your project.
+
+You can also create agent files manually:
+
+```json
+{
+  "name": "my-agent",
+  "description": "Does something useful",
+  "system_prompt": "You are an agent that...\nWhen done, say TASK_COMPLETE.",
+  "tools": ["shell"],
+  "max_steps": 10,
+  "stop_phrase": "TASK_COMPLETE"
+}
+```
+
+Place the file in `.hive/agents/my-agent.json` and it will appear in `/agent list` immediately.
+
+### MCP tools in agents
+
+Agents have access to all connected MCP servers. To restrict an agent to specific MCP tools, list the prefixed names (e.g. `gitmcp__commit`, `gitscribe__generate_commit_message`) in the `tools` field.
 
 ## Log file location
 

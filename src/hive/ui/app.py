@@ -43,6 +43,7 @@ from hive.workspace import (
     DEFAULT_SUMMARIZATION_TOKEN_LIMIT,
     Session,
     create_workspace,
+    get_agent_configs,
     get_language,
     get_mcp_configs,
     get_model,
@@ -53,6 +54,7 @@ from hive.workspace import (
     load_full_conversation,
     load_output,
     new_session,
+    save_agent_config,
     save_conversation,
     save_full_conversation,
     save_mcp_configs,
@@ -125,6 +127,15 @@ class _SlashLexer(Lexer):
 
 # Bare command names from the registry — used for autocomplete and coloring.
 _COMMANDS = COMMAND_NAMES
+
+# Prompts for the /agent add wizard steps.
+_AGENT_ADD_PROMPTS = [
+    "Agent name (e.g. 'git-helper'):",
+    "Short description:",
+    "System prompt (use Ctrl+J for newlines):",
+    "Allowed tools, comma-separated (empty = all tools):",
+    "Max steps (default 10):",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +237,14 @@ class HiveApp:
         self._mcp_add_step: int = 0  # 0=name, 1=command, 2=args, 3=env
         self._mcp_add_data: dict = {}
 
+        # --- agent state ---
+        self._agent_abort: threading.Event | None = None
+
+        # Agent add wizard state
+        self._agent_adding: bool = False
+        self._agent_add_step: int = 0  # 0=name,1=description,2=system_prompt,3=tools,4=max_steps
+        self._agent_add_data: dict = {}
+
         # --- output state ---
         self._welcome_lines: list[str] = []
         self._welcome_width: int = -1
@@ -314,6 +333,7 @@ class HiveApp:
                 or self._resuming
                 or self._picking_model
                 or self._managing_mcp
+                or self._agent_adding
             )
         )
         # Blocks history nav (but not name — user is typing freely there)
@@ -324,6 +344,7 @@ class HiveApp:
                 or self._picking_model
                 or self._awaiting_name
                 or self._managing_mcp
+                or self._agent_adding
             )
         )
 
@@ -640,6 +661,67 @@ class HiveApp:
             self.input_field.text = ""
             event.app.invalidate()
 
+        # -- Agent add wizard --
+        _agent_adding_active = Condition(lambda: self._agent_adding)
+
+        @kb.add(
+            "enter",
+            filter=has_focus(self.input_field) & _agent_adding_active,
+            eager=True,
+        )
+        def agent_add_step_submit(event):
+            text = self.input_field.text.strip()
+            step_keys = ["name", "description", "system_prompt", "tools", "max_steps"]
+            self._agent_add_data[step_keys[self._agent_add_step]] = text
+            self.input_field.text = ""
+            self._agent_add_step += 1
+            if self._agent_add_step < len(step_keys):
+                self.print(_AGENT_ADD_PROMPTS[self._agent_add_step])
+                event.app.invalidate()
+                return
+            # All steps done — build and save
+            raw_tools_str = self._agent_add_data.get("tools", "").strip()
+            raw_tools: list[str] | None = (
+                [t.strip() for t in raw_tools_str.split(",") if t.strip()]
+                if raw_tools_str
+                else None
+            )
+            try:
+                max_steps = int(self._agent_add_data.get("max_steps") or 10)
+            except ValueError:
+                max_steps = 10
+            from hive.agent import AgentDefinition
+
+            defn = AgentDefinition(
+                name=self._agent_add_data["name"],
+                description=self._agent_add_data["description"],
+                system_prompt=self._agent_add_data["system_prompt"],
+                tools=raw_tools,
+                max_steps=max_steps,
+            )
+            save_agent_config(self._cwd, defn.to_dict())
+            self.print(
+                f"[#FFC107]Agent '{defn.name}' saved.[/#FFC107] "
+                f"Run it with: /agent {defn.name} <goal>"
+            )
+            self._agent_adding = False
+            self._agent_add_step = 0
+            self._agent_add_data = {}
+            event.app.invalidate()
+
+        @kb.add(
+            "escape",
+            filter=has_focus(self.input_field) & _agent_adding_active,
+            eager=True,
+        )
+        def agent_add_cancel(event):
+            self._agent_adding = False
+            self._agent_add_step = 0
+            self._agent_add_data = {}
+            self.input_field.text = ""
+            self.print("[dim]Agent creation cancelled.[/dim]")
+            event.app.invalidate()
+
         # -- Inline hint navigation + Tab to accept --
         def _hint_matches() -> list[str]:
             text = self.input_field.text
@@ -770,6 +852,10 @@ class HiveApp:
 
         @kb.add("c-c")
         def ctrl_c(event):
+            if self._agent_abort is not None and not self._agent_abort.is_set():
+                self._agent_abort.set()
+                self.print("[dim]Aborting agent…[/dim]")
+                return
             now = time.monotonic()
             if now - self._last_ctrl_c < 1.0:
                 event.app.exit()
@@ -1271,7 +1357,124 @@ class HiveApp:
                     self.print(t("model.set", self._lang).format(model=new_model))
             return
 
+        if text == "/agent" or text.startswith("/agent "):
+            parts = text.split(None, 2)
+            sub = parts[1].strip() if len(parts) > 1 else ""
+            if not sub or sub == "list":
+                self._cmd_agent_list()
+                return
+            if sub == "add":
+                self._agent_adding = True
+                self._agent_add_step = 0
+                self._agent_add_data = {}
+                self.input_field.text = ""
+                self.print(_AGENT_ADD_PROMPTS[0])
+                if self.app.is_running:
+                    self.app.invalidate()
+                return
+            goal = parts[2].strip() if len(parts) > 2 else ""
+            if not goal:
+                self.print(
+                    f"[yellow]Usage:[/yellow] /agent {sub} <goal>\n"
+                    "Provide a goal for the agent to accomplish."
+                )
+                return
+            self._start_agent(sub, goal)
+            return
+
         self._start_ai_response(text)
+
+    def _cmd_agent_list(self) -> None:
+        from hive.agent import load_agent_definitions
+
+        definitions = load_agent_definitions(self._cwd)
+        if not definitions:
+            self.print("No agents available.")
+            return
+        table = Table(title="Agents", border_style="#FFC107")
+        table.add_column("Name", style="#FFC107")
+        table.add_column("Description")
+        table.add_column("Tools")
+        table.add_column("Max Steps", justify="right")
+        for defn in definitions.values():
+            tools_str = ", ".join(defn.tools) if defn.tools is not None else "all"
+            table.add_row(defn.name, defn.description, tools_str, str(defn.max_steps))
+        self.print(table)
+
+    def _start_agent(self, agent_name: str, goal: str) -> None:
+        from hive.agent import AgentRunner, AgentStep, load_agent_definitions
+
+        definitions = load_agent_definitions(self._cwd)
+        defn = definitions.get(agent_name)
+        if defn is None:
+            self.print(
+                f"[red]Unknown agent '{agent_name}'.[/red] "
+                "Use '/agent list' to see available agents."
+            )
+            return
+
+        self.print(f"[#FFC107]▶ Agent: {defn.name}[/#FFC107]  {goal}")
+
+        abort_event = threading.Event()
+        self._agent_abort = abort_event
+        self._ai_thinking = True
+
+        width = self._current_width()
+        mcp_tools = self._mcp.list_tools()
+        all_tools = AI_TOOLS + mcp_tools
+
+        def _tool_executor(name: str, args: dict) -> str:
+            if "__" in name:
+                return self._mcp.call_tool(name, args)
+            return run_tool(name, args, cwd=self._cwd)
+
+        def _on_step(step: AgentStep) -> None:
+            if step.tool_name and not step.tool_result:
+                # Tool call starting
+                args_preview = " ".join(str(v) for v in step.tool_args.values())[:60]
+                lines = self._render_to_lines(
+                    f"  [dim]↳ {step.tool_name}[/dim]"
+                    + (f"  {args_preview}" if args_preview else ""),
+                    width=width,
+                )
+                self._output_lines.extend(lines)
+            elif step.tool_name and step.tool_result:
+                # Tool result
+                preview = step.tool_result[:100].replace("\n", " ")
+                lines = self._render_to_lines(
+                    f"  [dim]  → {preview}[/dim]", width=width
+                )
+                self._output_lines.extend(lines)
+            elif step.text:
+                # Intermediate or final text
+                lines = self._render_to_lines(step.text, width=width)
+                self._output_lines.extend(lines)
+            self._scroll_offset = 0
+            if self.app.is_running:
+                self.app.invalidate()
+
+        def _agent_thread() -> None:
+            runner = AgentRunner(self._provider, self._model)
+            result = runner.run(
+                defn, goal, _tool_executor, _on_step, all_tools, abort_event
+            )
+
+            if not result.success and not abort_event.is_set():
+                self.print(f"[dim]Agent stopped: {result.summary}[/dim]")
+
+            self._conversation.append({"role": "assistant", "content": result.summary})
+            self._full_conversation.append(
+                {"role": "assistant", "content": result.summary}
+            )
+            self._maybe_summarize()
+
+            self._ai_thinking = False
+            self._agent_abort = None
+
+            if self.app.is_running:
+                self.app.invalidate()
+
+        threading.Thread(target=_agent_thread, daemon=True).start()
 
     def _start_ai_response(self, user_text: str) -> None:
         """Echo user input, then call the AI in a background thread with a live timer."""

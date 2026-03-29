@@ -237,6 +237,35 @@ def save_mcp_configs(cwd: Path, configs: list[dict]) -> None:
     path.write_text(json.dumps(configs, indent=2), encoding="utf-8")
 
 
+def get_agent_configs(cwd: Path) -> list[dict]:
+    """Read all .hive/agents/*.json files, returning [] if directory is missing."""
+    agents_dir = _hive_path(cwd) / "agents"
+    if not agents_dir.is_dir():
+        return []
+    configs = []
+    for path in sorted(agents_dir.glob("*.json")):
+        try:
+            configs.append(json.loads(path.read_text(encoding="utf-8")))
+        except (json.JSONDecodeError, OSError):
+            pass
+    return configs
+
+
+def save_agent_config(cwd: Path, config: dict) -> None:
+    """Write .hive/agents/<name>.json."""
+    agents_dir = _hive_path(cwd) / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    path = agents_dir / f"{config['name']}.json"
+    path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+
+
+def delete_agent_config(cwd: Path, name: str) -> None:
+    """Remove .hive/agents/<name>.json if it exists."""
+    path = _hive_path(cwd) / "agents" / f"{name}.json"
+    if path.exists():
+        path.unlink()
+
+
 def save_output(session: Session, lines: list[str]) -> None:
     """Write output lines as JSON-lines to the session output file."""
     session.output_path.write_text(
