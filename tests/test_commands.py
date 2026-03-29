@@ -198,8 +198,8 @@ def test_ai_tools_is_list():
     assert isinstance(AI_TOOLS, list)
 
 
-def test_ai_tools_has_two_tools():
-    assert len(AI_TOOLS) == 2
+def test_ai_tools_has_three_tools():
+    assert len(AI_TOOLS) == 3
 
 
 def test_ai_tools_have_required_keys():

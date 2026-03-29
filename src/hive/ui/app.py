@@ -1297,12 +1297,14 @@ class HiveApp:
         def _tool_executor(name: str, args: dict) -> str:
             if "__" in name:
                 return self._mcp.call_tool(name, args)
-            return run_tool(name, args)
+            return run_tool(name, args, cwd=self._cwd)
+
+        system_content = SYSTEM_PROMPT + f"\n\nCurrent working directory: {self._cwd}"
 
         def _ai_thread() -> None:
             try:
                 reply, tools_unsupported = self._provider.chat(
-                    [{"role": "system", "content": SYSTEM_PROMPT}] + self._conversation,
+                    [{"role": "system", "content": system_content}] + self._conversation,
                     self._model,
                     tools=all_tools,
                     tool_executor=_tool_executor,

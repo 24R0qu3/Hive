@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import shlex
+import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass
@@ -77,7 +80,8 @@ SYSTEM_PROMPT = (
     + "\n\nRules:\n"
     "- Never mention, suggest, or describe a command that is not in the list above.\n"
     "- If a user asks about a command that is not in the list, tell them it does not exist.\n"
-    "- Never try to execute commands yourself.\n"
+    "- Use the 'shell' tool to run shell commands when needed (e.g. to inspect files, "
+    "list directories, or gather information). Do not fabricate command output.\n"
     "- When asked what commands are available, list only the commands above."
 )
 
@@ -105,12 +109,35 @@ def _get_command_info(name: str) -> str:
     )
 
 
-def run_tool(name: str, args: dict) -> str:
+def _run_shell(command: str, cwd: Path | None) -> str:
+    try:
+        result = subprocess.run(
+            shlex.split(command),
+            capture_output=True,
+            text=True,
+            cwd=cwd,
+            timeout=30,
+        )
+        output = result.stdout
+        if result.stderr:
+            output += result.stderr
+        return output if output else "(no output)"
+    except FileNotFoundError as exc:
+        return f"Command not found: {exc}"
+    except subprocess.TimeoutExpired:
+        return "Command timed out after 30 seconds."
+    except Exception as exc:
+        return f"Error: {exc}"
+
+
+def run_tool(name: str, args: dict, cwd: Path | None = None) -> str:
     """Execute an AI tool by name and return the result string."""
     if name == "list_commands":
         return _list_commands()
     if name == "get_command_info":
         return _get_command_info(args.get("name", ""))
+    if name == "shell":
+        return _run_shell(args.get("command", ""), cwd)
     return f"Unknown tool: '{name}'."
 
 
@@ -145,6 +172,27 @@ AI_TOOLS: list[dict] = [
                     }
                 },
                 "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "shell",
+            "description": (
+                "Run a shell command in the current working directory and return its output. "
+                "Use this to inspect files, list directories, check environment variables, "
+                "or gather any information that requires running a command."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "The shell command to run, e.g. 'ls', 'pwd', 'cat README.md'.",
+                    }
+                },
+                "required": ["command"],
             },
         },
     },
