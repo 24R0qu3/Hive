@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import shlex
+import platform
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -124,19 +124,39 @@ def _get_command_info(name: str) -> str:
 
 def _run_shell(command: str, cwd: Path | None) -> str:
     try:
-        result = subprocess.run(
-            shlex.split(command),
-            capture_output=True,
-            text=True,
-            cwd=cwd,
-            timeout=30,
-        )
+        if platform.system() == "Windows":
+            # Use PowerShell 7 (pwsh) for rich command support (ls, pwd, cat, etc.).
+            # Fall back to cmd.exe if pwsh is not installed.
+            try:
+                result = subprocess.run(
+                    ["pwsh", "-NoProfile", "-NonInteractive", "-Command", command],
+                    capture_output=True,
+                    text=True,
+                    cwd=cwd,
+                    timeout=30,
+                )
+            except FileNotFoundError:
+                result = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    cwd=cwd,
+                    timeout=30,
+                    shell=True,
+                )
+        else:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                cwd=cwd,
+                timeout=30,
+                shell=True,
+            )
         output = result.stdout
         if result.stderr:
             output += result.stderr
         return output if output else "(no output)"
-    except FileNotFoundError as exc:
-        return f"Command not found: {exc}"
     except subprocess.TimeoutExpired:
         return "Command timed out after 30 seconds."
     except Exception as exc:

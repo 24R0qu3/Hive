@@ -1429,18 +1429,19 @@ class HiveApp:
             return run_tool(name, args, cwd=self._cwd)
 
         def _on_step(step: AgentStep) -> None:
+            step_tag = f"[dim][{step.step_num}/{defn.max_steps}][/dim] "
             if step.tool_name and not step.tool_result:
                 # Tool call starting
                 args_preview = " ".join(str(v) for v in step.tool_args.values())[:60]
                 lines = self._render_to_lines(
-                    f"  [dim]↳ {step.tool_name}[/dim]"
+                    f"  {step_tag}[dim]↳ {step.tool_name}[/dim]"
                     + (f"  {args_preview}" if args_preview else ""),
                     width=width,
                 )
                 self._output_lines.extend(lines)
             elif step.tool_name and step.tool_result:
                 # Tool result
-                preview = step.tool_result[:100].replace("\n", " ")
+                preview = step.tool_result[:250].replace("\n", " ")
                 lines = self._render_to_lines(
                     f"  [dim]  → {preview}[/dim]", width=width
                 )
@@ -1453,10 +1454,28 @@ class HiveApp:
             if self.app.is_running:
                 self.app.invalidate()
 
+        import platform as _platform
+        import subprocess as _sp
+        _git_branch = ""
+        try:
+            _r = _sp.run(
+                ["git", "branch", "--show-current"],
+                capture_output=True, text=True, cwd=self._cwd, timeout=5,
+            )
+            _git_branch = _r.stdout.strip()
+        except Exception:
+            pass
+        enriched_goal = (
+            f"[Context: OS={_platform.system()} {_platform.release()}, "
+            f"CWD={self._cwd}"
+            + (f", git branch={_git_branch}" if _git_branch else "")
+            + f"]\n{goal}"
+        )
+
         def _agent_thread() -> None:
             runner = AgentRunner(self._provider, self._model)
             result = runner.run(
-                defn, goal, _tool_executor, _on_step, all_tools, abort_event
+                defn, enriched_goal, _tool_executor, _on_step, all_tools, abort_event
             )
 
             if not result.success and not abort_event.is_set():
@@ -1502,7 +1521,12 @@ class HiveApp:
                 return self._mcp.call_tool(name, args)
             return run_tool(name, args, cwd=self._cwd)
 
-        system_content = SYSTEM_PROMPT + f"\n\nCurrent working directory: {self._cwd}"
+        import platform as _platform
+        system_content = (
+            SYSTEM_PROMPT
+            + f"\n\nCurrent working directory: {self._cwd}"
+            + f"\nOperating system: {_platform.system()} {_platform.release()}"
+        )
 
         def _ai_thread() -> None:
             try:
