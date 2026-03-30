@@ -85,6 +85,12 @@ COMMAND_REGISTRY: list[CommandDoc] = [
 # Bare command names — used for autocomplete and coloring in the TUI.
 COMMAND_NAMES: list[str] = [cmd.name for cmd in COMMAND_REGISTRY]
 
+# Sub-commands for commands that accept a second token.
+SUB_COMMANDS: dict[str, list[str]] = {
+    "/agent": ["add", "list", "delete", "edit"],
+    "/mcp": ["manage"],
+}
+
 # System prompt: includes the full command list so any model can answer questions about them.
 SYSTEM_PROMPT = (
     "You are Hive, an AI assistant running in a terminal application.\n"

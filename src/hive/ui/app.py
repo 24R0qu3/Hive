@@ -23,7 +23,7 @@ from rich.console import Console
 from rich.table import Table
 
 from hive import ai
-from hive.commands import AI_TOOLS, COMMAND_NAMES, SYSTEM_PROMPT, run_tool
+from hive.commands import AI_TOOLS, COMMAND_NAMES, SUB_COMMANDS, SYSTEM_PROMPT, run_tool
 from hive.i18n import LANG_OPTIONS, t
 from hive.log import add_session_handler
 from hive.mcp import MCPManager, MCPServerConfig
@@ -94,6 +94,7 @@ class _ScrollableWindow(Window):
 _STYLE = Style.from_dict(
     {
         "slash-cmd": "#FFC107 bold",
+        "slash-sub": "#FFD54F bold",
         "hint": "#666666",
         "transient-hint": "#999999 italic",
     }
@@ -101,7 +102,7 @@ _STYLE = Style.from_dict(
 
 
 class _SlashLexer(Lexer):
-    """Highlights slash-command tokens anywhere in the input."""
+    """Highlights slash-command tokens and their sub-commands in the input."""
 
     def lex_document(self, document):
         lines = document.lines
@@ -110,13 +111,19 @@ class _SlashLexer(Lexer):
             line = lines[lineno]
             parts = line.split(" ")
             fragments: list = []
+            first_cmd: str | None = None
             for i, part in enumerate(parts):
                 if i > 0:
                     fragments.append(("", " "))
-                if part.startswith("/") and any(
-                    cmd.startswith(part) for cmd in _COMMANDS
+                if (
+                    i == 0
+                    and part.startswith("/")
+                    and any(cmd.startswith(part) for cmd in _COMMANDS)
                 ):
                     fragments.append(("class:slash-cmd", part))
+                    first_cmd = next((cmd for cmd in _COMMANDS if cmd == part), None)
+                elif i == 1 and first_cmd and part in SUB_COMMANDS.get(first_cmd, []):
+                    fragments.append(("class:slash-sub", part))
                 else:
                     fragments.append(("", part))
             return fragments
@@ -290,7 +297,22 @@ class HiveApp:
             self.input_field.buffer.suggestion = None
             if "\n" in text:
                 return
-            # Match against the last space-separated token if it's a slash prefix
+            parts = text.split(" ", 1)
+            first = parts[0]
+            # Sub-command completion: "/cmd sub_prefix"
+            if len(parts) == 2 and first in SUB_COMMANDS:
+                sub_prefix = parts[1]
+                subs = [
+                    s
+                    for s in SUB_COMMANDS[first]
+                    if s.startswith(sub_prefix) and s != sub_prefix
+                ]
+                if subs:
+                    self.input_field.buffer.suggestion = Suggestion(
+                        subs[0][len(sub_prefix) :]
+                    )
+                return
+            # Top-level command completion: "/cmd_prefix"
             last = text.rsplit(" ", 1)[-1]
             if len(last) > 1 and last.startswith("/"):
                 matches = [c for c in _COMMANDS if c.startswith(last) and c != last]
@@ -729,6 +751,19 @@ class HiveApp:
             text = self.input_field.text
             if "\n" in text or not text.startswith("/"):
                 return []
+            parts = text.split(" ", 1)
+            first = parts[0]
+            # Sub-command hints: "/cmd " or "/cmd sub_prefix"
+            if len(parts) == 2 and first in SUB_COMMANDS:
+                sub_prefix = parts[1]
+                return [
+                    s
+                    for s in SUB_COMMANDS[first]
+                    if s.startswith(sub_prefix) and s != sub_prefix
+                ][:5]
+            # Only show sub-command hints (not top-level) when command is exact and has subs
+            if first in SUB_COMMANDS and text == first:
+                return []
             return [c for c in _COMMANDS if c.startswith(text) and c != text][:5]
 
         def _inline_match() -> str | None:
@@ -760,9 +795,15 @@ class HiveApp:
         def tab_complete(event):
             matches = _hint_matches()
             if matches:
-                # Whole input is a slash-command prefix — replace entirely
                 idx = min(self._hint_idx, len(matches) - 1)
-                new_text = matches[idx]
+                text = self.input_field.text
+                parts = text.split(" ", 1)
+                if len(parts) == 2 and parts[0] in SUB_COMMANDS:
+                    # Sub-command completion: "/cmd sub" → "/cmd add"
+                    new_text = parts[0] + " " + matches[idx]
+                else:
+                    # Top-level completion: "/res" → "/resume"
+                    new_text = matches[idx]
             else:
                 # Inline slash-command — replace last word only
                 completion = _inline_match()
@@ -915,11 +956,17 @@ class HiveApp:
             matches = _hint_matches()
             if matches:
                 idx = min(self._hint_idx, len(matches) - 1)
+                text = self.input_field.text
+                input_parts = text.split(" ", 1)
+                is_sub = len(input_parts) == 2 and input_parts[0] in SUB_COMMANDS
+                cmd_prefix = (input_parts[0] + " ") if is_sub else ""
+                style_selected = "class:slash-sub" if is_sub else "class:slash-cmd"
                 for i, cmd in enumerate(matches):
+                    label = cmd_prefix + cmd
                     if i == idx:
-                        parts += [("class:slash-cmd", f" ▶ {cmd}"), ("", "\n")]
+                        parts += [(style_selected, f" ▶ {label}"), ("", "\n")]
                     else:
-                        parts += [("class:hint", f"   {cmd}"), ("", "\n")]
+                        parts += [("class:hint", f"   {label}"), ("", "\n")]
             if self._transient_hint:
                 parts += [("class:transient-hint", f"  {self._transient_hint}")]
             return parts
