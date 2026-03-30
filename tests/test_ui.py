@@ -300,9 +300,7 @@ def test_handle_use_shows_available_when_connected(hive_app, monkeypatch):
     assert "myserver" in output
 
 
-def test_handle_use_server_plus_query_activates_and_routes_to_ai(
-    hive_app, monkeypatch
-):
+def test_handle_use_server_plus_query_activates_and_routes_to_ai(hive_app, monkeypatch):
     monkeypatch.setattr(hive_app._mcp, "servers", lambda: {"engra": object()})
     routed = []
     monkeypatch.setattr(hive_app, "_start_ai_response", lambda q: routed.append(q))

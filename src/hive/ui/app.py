@@ -268,7 +268,8 @@ class HiveApp:
         self._mcp_add_step: int = 0  # 0=name, 1=command, 2=args, 3=env
         self._mcp_add_data: dict = {}
 
-        # --- agent state ---
+        # --- AI / agent abort state ---
+        self._ai_abort: threading.Event | None = None
         self._agent_abort: threading.Event | None = None
 
         # Agent add wizard state
@@ -948,6 +949,10 @@ class HiveApp:
             if self._agent_abort is not None and not self._agent_abort.is_set():
                 self._agent_abort.set()
                 self.print("[dim]Aborting agent…[/dim]")
+                return
+            if self._ai_abort is not None and not self._ai_abort.is_set():
+                self._ai_abort.set()
+                self.print("[dim]Aborting…[/dim]")
                 return
             now = time.monotonic()
             if now - self._last_ctrl_c < 1.0:
@@ -1797,8 +1802,11 @@ class HiveApp:
 
         start = time.monotonic()
         done = threading.Event()
+        abort_event = threading.Event()
+        self._ai_abort = abort_event
         result: list[str | None] = [None]
         error: list[str | None] = [None]
+        aborted: list[bool] = [False]
         tools_unsupported_flag: list[bool] = [False]
         width = self._current_width()
 
@@ -1838,12 +1846,16 @@ class HiveApp:
                     self._model,
                     tools=all_tools,
                     tool_executor=_tool_executor,
+                    abort=abort_event,
                 )
                 result[0] = reply
                 tools_unsupported_flag[0] = tools_unsupported
+            except ai._Aborted:
+                aborted[0] = True
             except Exception as exc:
                 error[0] = str(exc)
             finally:
+                self._ai_abort = None
                 done.set()
 
         def _anim_thread() -> None:
@@ -1862,7 +1874,9 @@ class HiveApp:
             elapsed = int(time.monotonic() - start)
             self._ai_thinking = False
 
-            if error[0]:
+            if aborted[0]:
+                self._output_lines[thinking_idx] = ""
+            elif error[0]:
                 self._output_lines[thinking_idx] = t("ai.error", self._lang).format(
                     error=error[0]
                 )

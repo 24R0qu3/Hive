@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import urllib.error
 import urllib.request
 from typing import Callable, Protocol, runtime_checkable
@@ -32,6 +33,10 @@ THINKING_MSGS = [
 ]
 
 
+class _Aborted(Exception):
+    """Raised when an in-flight AI request is cancelled by the user."""
+
+
 @runtime_checkable
 class AIProvider(Protocol):
     """Minimal interface every AI backend must satisfy."""
@@ -42,12 +47,15 @@ class AIProvider(Protocol):
         model: str,
         tools: list[dict] | None = None,
         tool_executor: Callable[[str, dict], str] | None = None,
+        abort: threading.Event | None = None,
     ) -> tuple[str, bool]:
         """Send a message list and return the assistant reply as a string.
 
         If *tools* and *tool_executor* are provided the implementation should
         run a tool-call loop: execute tool calls returned by the model and
         feed results back until the model returns a plain text reply.
+
+        If *abort* is set while the request is in flight, ``_Aborted`` is raised.
         """
         ...
 
@@ -73,16 +81,24 @@ class OllamaProvider:
         model: str,
         tools: list[dict] | None = None,
         tool_executor: Callable[[str, dict], str] | None = None,
+        abort: threading.Event | None = None,
     ) -> tuple[str, bool]:
         """Send *messages* to Ollama and return ``(reply, fallback)``.
 
         *fallback* is ``True`` when the model does not support tool calling and
         the request was retried without tools; ``False`` otherwise.
+        Raises ``_Aborted`` if *abort* is set while waiting.
         """
         try:
-            return self._chat_with_tools(messages, model, tools, tool_executor), False
+            return (
+                self._chat_with_tools(messages, model, tools, tool_executor, abort),
+                False,
+            )
         except _ToolsNotSupported:
-            return self._chat_with_tools(messages, model, None, None), True
+            return (
+                self._chat_with_tools(messages, model, None, None, abort),
+                True,
+            )
 
     def _chat_with_tools(
         self,
@@ -90,9 +106,12 @@ class OllamaProvider:
         model: str,
         tools: list[dict] | None,
         tool_executor: Callable[[str, dict], str] | None,
+        abort: threading.Event | None = None,
     ) -> str:
         conversation = list(messages)
         for _ in range(10):  # max tool-call rounds
+            if abort is not None and abort.is_set():
+                raise _Aborted()
             payload: dict = {
                 "model": model,
                 "messages": conversation,
@@ -102,7 +121,7 @@ class OllamaProvider:
             if tools:
                 payload["tools"] = tools
 
-            data = self._post(payload)
+            data = self._post(payload, abort=abort)
             msg = data.get("message", {})
             tool_calls = msg.get("tool_calls") or []
 
@@ -114,6 +133,8 @@ class OllamaProvider:
 
             # Execute each tool and append results
             for call in tool_calls:
+                if abort is not None and abort.is_set():
+                    raise _Aborted()
                 fn = call.get("function", {})
                 name = fn.get("name", "")
                 args = fn.get("arguments") or {}
@@ -133,12 +154,13 @@ class OllamaProvider:
                     "messages": conversation,
                     "stream": False,
                     "options": {"num_ctx": self.num_ctx},
-                }
+                },
+                abort=abort,
             )["message"].get("content")
             or ""
         )
 
-    def _post(self, payload: dict) -> dict:
+    def _post(self, payload: dict, abort: threading.Event | None = None) -> dict:
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
             f"{self.base_url}/api/chat",
@@ -146,31 +168,49 @@ class OllamaProvider:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                body = json.loads(resp.read())
-                return body
-        except urllib.error.HTTPError as exc:
-            msg = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
-            # Ollama returns 400 for unsupported tools, but some models crash
-            # with 500 when a tools payload is sent to a model without a tool
-            # template (e.g. qwen3.5). Treat both as tools-not-supported so the
-            # caller can retry without tools.
-            if exc.code == 400 and "tool" in msg.lower():
-                raise _ToolsNotSupported() from exc
-            if exc.code == 500 and (
-                "model runner" in msg.lower()
-                or "resource limit" in msg.lower()
-                or "unexpectedly stopped" in msg.lower()
-            ):
-                raise _ToolsNotSupported() from exc
-            raise ConnectionError(
-                f"Ollama error {exc.code} at {self.base_url}: {msg}"
-            ) from exc
-        except urllib.error.URLError as exc:
-            raise ConnectionError(
-                f"Ollama not reachable at {self.base_url}: {exc}"
-            ) from exc
+
+        _result: list[dict | None] = [None]
+        _exc: list[BaseException | None] = [None]
+
+        def _do() -> None:
+            try:
+                with urllib.request.urlopen(req, timeout=120) as resp:
+                    _result[0] = json.loads(resp.read())
+            except BaseException as e:  # noqa: BLE001
+                _exc[0] = e
+
+        t = threading.Thread(target=_do, daemon=True)
+        t.start()
+        while t.is_alive():
+            t.join(timeout=0.3)
+            if abort is not None and abort.is_set():
+                raise _Aborted()
+
+        exc = _exc[0]
+        if exc is not None:
+            if isinstance(exc, urllib.error.HTTPError):
+                msg = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
+                # Ollama returns 400 for unsupported tools, but some models crash
+                # with 500 when a tools payload is sent to a model without a tool
+                # template (e.g. qwen3.5). Treat both as tools-not-supported so the
+                # caller can retry without tools.
+                if exc.code == 400 and "tool" in msg.lower():
+                    raise _ToolsNotSupported() from exc
+                if exc.code == 500 and (
+                    "model runner" in msg.lower()
+                    or "resource limit" in msg.lower()
+                    or "unexpectedly stopped" in msg.lower()
+                ):
+                    raise _ToolsNotSupported() from exc
+                raise ConnectionError(
+                    f"Ollama error {exc.code} at {self.base_url}: {msg}"
+                ) from exc
+            if isinstance(exc, urllib.error.URLError):
+                raise ConnectionError(
+                    f"Ollama not reachable at {self.base_url}: {exc}"
+                ) from exc
+            raise exc
+        return _result[0]  # type: ignore[return-value]
 
     def chat_step(
         self,
@@ -365,11 +405,16 @@ class AnthropicProvider:
         model: str,
         tools: list[dict] | None = None,
         tool_executor: Callable[[str, dict], str] | None = None,
+        abort: threading.Event | None = None,
     ) -> tuple[str, bool]:
         conversation = list(messages)
         anthropic_tools = _openai_tools_to_anthropic(tools) if tools else []
 
+        text = ""
         for _ in range(10):
+            if abort is not None and abort.is_set():
+                raise _Aborted()
+
             system, anth_msgs = _openai_messages_to_anthropic(conversation)
             kwargs: dict = {
                 "model": model,
@@ -381,7 +426,26 @@ class AnthropicProvider:
             if anthropic_tools:
                 kwargs["tools"] = anthropic_tools
 
-            response = self._client.messages.create(**kwargs)
+            # Run the blocking API call in a thread so abort can interrupt it
+            _response: list = [None]
+            _exc: list[BaseException | None] = [None]
+
+            def _do_create() -> None:
+                try:
+                    _response[0] = self._client.messages.create(**kwargs)
+                except BaseException as e:  # noqa: BLE001
+                    _exc[0] = e
+
+            t = threading.Thread(target=_do_create, daemon=True)
+            t.start()
+            while t.is_alive():
+                t.join(timeout=0.3)
+                if abort is not None and abort.is_set():
+                    raise _Aborted()
+
+            if _exc[0] is not None:
+                raise _exc[0]  # type: ignore[misc]
+            response = _response[0]
 
             text = ""
             tool_calls: list[dict] = []
@@ -401,6 +465,8 @@ class AnthropicProvider:
 
             conversation.append({"role": "assistant", "tool_calls": tool_calls})
             for call in tool_calls:
+                if abort is not None and abort.is_set():
+                    raise _Aborted()
                 fn = call["function"]
                 result = tool_executor(fn["name"], fn["arguments"])
                 conversation.append({"role": "tool", "content": result})
