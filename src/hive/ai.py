@@ -210,5 +210,217 @@ class OllamaProvider:
             return []
 
 
+DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6"
+
+_ANTHROPIC_MODELS = [
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5-20251001",
+]
+
+
+def _openai_tools_to_anthropic(tools: list[dict]) -> list[dict]:
+    """Convert OpenAI-format tool schemas to Anthropic tool format."""
+    out = []
+    for t in tools:
+        fn = t.get("function", {})
+        out.append(
+            {
+                "name": fn.get("name", ""),
+                "description": fn.get("description", ""),
+                "input_schema": fn.get(
+                    "parameters", {"type": "object", "properties": {}}
+                ),
+            }
+        )
+    return out
+
+
+def _openai_messages_to_anthropic(
+    messages: list[dict],
+) -> tuple[str | None, list[dict]]:
+    """Convert OpenAI-format messages to Anthropic API format.
+
+    Returns ``(system_content, anthropic_messages)``.  Tool calls are matched
+    with their results by position within each assistant turn.
+    """
+    system: str | None = None
+    result: list[dict] = []
+    pending_ids: list[str] = []  # tool_use ids waiting for tool result messages
+
+    for msg in messages:
+        role = msg.get("role")
+
+        if role == "system":
+            system = msg.get("content", "")
+            continue
+
+        if role == "user":
+            content = msg.get("content", "")
+            result.append({"role": "user", "content": content})
+            pending_ids = []
+
+        elif role == "assistant":
+            tool_calls = msg.get("tool_calls") or []
+            blocks: list[dict] = []
+            pending_ids = []
+
+            text = msg.get("content") or ""
+            if text:
+                blocks.append({"type": "text", "text": text})
+
+            for i, call in enumerate(tool_calls):
+                fn = call.get("function", {})
+                tool_id = call.get("id") or f"hive_{i}"
+                args = fn.get("arguments") or {}
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except json.JSONDecodeError:
+                        args = {}
+                blocks.append(
+                    {
+                        "type": "tool_use",
+                        "id": tool_id,
+                        "name": fn.get("name", ""),
+                        "input": args,
+                    }
+                )
+                pending_ids.append(tool_id)
+
+            if blocks:
+                result.append({"role": "assistant", "content": blocks})
+
+        elif role == "tool":
+            # Tool results must go into a user message as tool_result blocks.
+            tool_id = pending_ids.pop(0) if pending_ids else "hive_0"
+            block = {
+                "type": "tool_result",
+                "tool_use_id": tool_id,
+                "content": msg.get("content", ""),
+            }
+            # Append to the last user message if it already holds tool_results,
+            # otherwise open a new user message.
+            if (
+                result
+                and result[-1]["role"] == "user"
+                and isinstance(result[-1]["content"], list)
+            ):
+                result[-1]["content"].append(block)
+            else:
+                result.append({"role": "user", "content": [block]})
+
+    return system, result
+
+
+class AnthropicProvider:
+    """Claude API provider via the official Anthropic SDK."""
+
+    def __init__(self, api_key: str | None = None) -> None:
+        import os
+
+        import anthropic
+
+        key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+        if not key:
+            raise RuntimeError(
+                "ANTHROPIC_API_KEY is not set. "
+                "Export the variable or pass api_key= to AnthropicProvider."
+            )
+        self._client = anthropic.Anthropic(api_key=key)
+
+    def chat(
+        self,
+        messages: list[dict],
+        model: str,
+        tools: list[dict] | None = None,
+        tool_executor: Callable[[str, dict], str] | None = None,
+    ) -> tuple[str, bool]:
+        conversation = list(messages)
+        anthropic_tools = _openai_tools_to_anthropic(tools) if tools else []
+
+        for _ in range(10):
+            system, anth_msgs = _openai_messages_to_anthropic(conversation)
+            kwargs: dict = {
+                "model": model,
+                "max_tokens": 8096,
+                "messages": anth_msgs,
+            }
+            if system:
+                kwargs["system"] = system
+            if anthropic_tools:
+                kwargs["tools"] = anthropic_tools
+
+            response = self._client.messages.create(**kwargs)
+
+            text = ""
+            tool_calls: list[dict] = []
+            for block in response.content:
+                if block.type == "text":
+                    text = block.text
+                elif block.type == "tool_use":
+                    tool_calls.append(
+                        {
+                            "id": block.id,
+                            "function": {"name": block.name, "arguments": block.input},
+                        }
+                    )
+
+            if not tool_calls or tool_executor is None:
+                return text, False
+
+            conversation.append({"role": "assistant", "tool_calls": tool_calls})
+            for call in tool_calls:
+                fn = call["function"]
+                result = tool_executor(fn["name"], fn["arguments"])
+                conversation.append({"role": "tool", "content": result})
+
+        # Max rounds exceeded — return last text
+        return text, False
+
+    def chat_step(
+        self,
+        messages: list[dict],
+        model: str,
+        tools: list[dict] | None = None,
+    ) -> tuple[str, list[dict]]:
+        """Single model call; returns ``(text, tool_calls)`` in OpenAI format."""
+        system, anth_msgs = _openai_messages_to_anthropic(messages)
+        kwargs: dict = {
+            "model": model,
+            "max_tokens": 8096,
+            "messages": anth_msgs,
+        }
+        if system:
+            kwargs["system"] = system
+        if tools:
+            kwargs["tools"] = _openai_tools_to_anthropic(tools)
+
+        response = self._client.messages.create(**kwargs)
+
+        text = ""
+        tool_calls: list[dict] = []
+        for block in response.content:
+            if block.type == "text":
+                text = block.text
+            elif block.type == "tool_use":
+                tool_calls.append(
+                    {
+                        "id": block.id,
+                        "function": {"name": block.name, "arguments": block.input},
+                    }
+                )
+
+        return text, tool_calls
+
+    def is_reachable(self) -> bool:
+        """Always True for Anthropic — connectivity is assumed if key is set."""
+        return True
+
+    def list_models(self) -> list[str]:
+        """Return the list of known Claude models."""
+        return list(_ANTHROPIC_MODELS)
+
+
 class _ToolsNotSupported(Exception):
     """Raised internally when Ollama signals the model doesn't support tools."""

@@ -43,6 +43,7 @@ hive [OPTIONS]
 | `--log-path` | platform default | Path to log file |
 | `--resume <id>` | — | Resume a previous session by ID |
 | `--list-sessions` | — | Print all sessions for the current directory and exit |
+| `--provider <name>` | auto | AI provider: `ollama` or `anthropic` (default: auto-detect from `ANTHROPIC_API_KEY`) |
 
 **Log levels:** `DEBUG`, `INFO`, `WARNING`, `ERROR`
 
@@ -132,6 +133,15 @@ ollama pull llama3.2
 The default model is `llama3.2` and can be overridden per project with `/model <name>`. The choice is saved in `.hive/config.json` and restored on resume.
 
 While the model is thinking, Hive shows an animated status line with the elapsed time. The full conversation history is preserved in-session for multi-turn context, and the AI response is displayed directly in the output area.
+
+### Anthropic / Claude backend
+
+If `ANTHROPIC_API_KEY` is set in the environment, Hive automatically uses Claude instead of Ollama. The default model is `claude-sonnet-4-6`. You can also force a provider explicitly:
+
+```bash
+hive --provider anthropic   # always use Claude
+hive --provider ollama      # always use Ollama
+```
 
 ### Swapping backends
 
