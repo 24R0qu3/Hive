@@ -7,7 +7,6 @@ import logging
 import os
 import re
 import threading
-from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -44,6 +43,7 @@ class MCPServerConfig:
     args: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
     enabled: bool = True
+    scope: str = "local"  # "local" or "global" — not persisted
 
     def to_dict(self) -> dict:
         return {
@@ -66,19 +66,19 @@ class MCPServerConfig:
 
 
 class _ServerConn:
-    """Holds a live MCP session and its cached tool list."""
+    """Holds a live MCP session, its cached tool list, and the task keeping it alive."""
 
     def __init__(
         self,
         session,
         tools: list,
-        exit_stack: AsyncExitStack,
         config: MCPServerConfig,
+        task: "asyncio.Task",
     ) -> None:
         self.session = session
         self.tools = tools  # list[mcp.types.Tool]
-        self.exit_stack = exit_stack
         self.config = config
+        self.task = task  # asyncio.Task running _run_server — cancel to disconnect
 
 
 class MCPManager:
@@ -87,6 +87,10 @@ class MCPManager:
     Runs a dedicated asyncio event loop on a background daemon thread so that
     async MCP calls can be made from synchronous Hive code via
     ``asyncio.run_coroutine_threadsafe``.
+
+    Each connection is kept alive by a long-running ``_run_server`` task.
+    Disconnecting cancels that task, which lets anyio's cancel scopes (used
+    inside ``stdio_client``) unwind cleanly in the task that entered them.
     """
 
     def __init__(self) -> None:
@@ -109,22 +113,38 @@ class MCPManager:
     # ------------------------------------------------------------------
 
     def connect(self, config: MCPServerConfig, timeout: int = 15) -> None:
-        """Connect to an MCP server and cache its tools. Raises on failure."""
-        future = asyncio.run_coroutine_threadsafe(
-            self._connect_async(config), self._loop
+        """Start a long-running connection task and wait until it is ready."""
+        ready = threading.Event()
+        error_box: list[Exception] = []
+        asyncio.run_coroutine_threadsafe(
+            self._run_server(config, ready, error_box), self._loop
         )
-        future.result(timeout=timeout)
+        if not ready.wait(timeout):
+            raise TimeoutError(
+                f"MCP server '{config.name}' did not connect within {timeout}s"
+            )
+        if error_box:
+            raise error_box[0]
 
     def disconnect(self, name: str, timeout: int = 5) -> None:
-        """Disconnect from a server and clean up its resources."""
-        if name not in self._conns:
-            return
+        """Cancel the connection task; anyio cleans up its own cancel scopes."""
         with self._lock:
-            conn = self._conns.pop(name, None)
+            conn = self._conns.get(name)
         if conn is None:
             return
-        future = asyncio.run_coroutine_threadsafe(conn.exit_stack.aclose(), self._loop)
-        future.result(timeout=timeout)
+
+        async def _cancel(task: asyncio.Task) -> None:
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        future = asyncio.run_coroutine_threadsafe(_cancel(conn.task), self._loop)
+        try:
+            future.result(timeout=timeout)
+        except Exception:
+            pass
 
     def shutdown(self, timeout: int = 5) -> None:
         """Signal the health monitor to stop, then disconnect all servers."""
@@ -186,15 +206,48 @@ class MCPManager:
         """Return a snapshot of currently connected servers."""
         return dict(self._conns)
 
+    def compact_manifest(self) -> str | None:
+        """Return a brief tool listing for all connected servers — no parameter schemas.
+
+        Returns None when no servers are connected.  Each server appears on one
+        line with its tool names so the model knows what is available without
+        consuming context on full JSON schemas.
+        """
+        with self._lock:
+            snapshot = dict(self._conns)
+        if not snapshot:
+            return None
+        lines = ["MCP servers available (/use <name> activates full schemas):"]
+        for server_name, conn in snapshot.items():
+            names = [tool.name for tool in conn.tools]
+            preview = ", ".join(names[:10])
+            if len(names) > 10:
+                preview += f" (+{len(names) - 10} more)"
+            lines.append(f"\u2022 {server_name}: {preview}")
+        return "\n".join(lines)
+
     # ------------------------------------------------------------------
     # Internal async helpers
     # ------------------------------------------------------------------
 
-    async def _connect_async(self, config: MCPServerConfig) -> None:
+    async def _run_server(
+        self,
+        config: MCPServerConfig,
+        ready: threading.Event,
+        error_box: list[Exception],
+    ) -> None:
+        """Long-running coroutine that holds one MCP connection open.
+
+        Registers itself in ``self._conns`` once the session is ready, then
+        awaits an event that is never set — keeping the ``stdio_client`` and
+        ``ClientSession`` context managers alive until this task is cancelled.
+        Cancellation causes both context managers to unwind inside this task,
+        which satisfies anyio's requirement that cancel scopes are exited in
+        the same task that entered them.
+        """
         from mcp import ClientSession
         from mcp.client.stdio import StdioServerParameters, stdio_client
 
-        stack = AsyncExitStack()
         merged_env = {**os.environ, **config.env}
         expanded_command = _expand_env(config.command, config.env)
         expanded_args = [_expand_env(a, config.env) for a in config.args]
@@ -203,14 +256,32 @@ class MCPManager:
             args=expanded_args,
             env=merged_env,
         )
-        read, write = await stack.enter_async_context(stdio_client(params))
-        session = await stack.enter_async_context(ClientSession(read, write))
-        await session.initialize()
-        result = await session.list_tools()
-        with self._lock:
-            self._conns[config.name] = _ServerConn(
-                session=session, tools=result.tools, exit_stack=stack, config=config
-            )
+        devnull = open(os.devnull, "w")
+        try:
+            async with stdio_client(params, errlog=devnull) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    result = await session.list_tools()
+                    with self._lock:
+                        self._conns[config.name] = _ServerConn(
+                            session=session,
+                            tools=result.tools,
+                            config=config,
+                            task=asyncio.current_task(),
+                        )
+                    ready.set()
+                    # Hold the connection open until this task is cancelled.
+                    _never = asyncio.Event()
+                    await _never.wait()
+        except asyncio.CancelledError:
+            pass  # normal disconnect path
+        except Exception as exc:
+            error_box.append(exc)
+            ready.set()
+        finally:
+            devnull.close()
+            with self._lock:
+                self._conns.pop(config.name, None)
 
     def _probe(self, conn: _ServerConn) -> bool:
         """Return False if the server session is no longer responsive."""
@@ -250,10 +321,9 @@ class MCPManager:
                         self._shutdown_event.wait(timeout=delay)
                         if not self._shutdown_event.is_set():
                             try:
-                                future = asyncio.run_coroutine_threadsafe(
-                                    self._connect_async(conn.config), self._loop
-                                )
-                                future.result(timeout=15)
+                                config = conn.config
+                                self.disconnect(name)
+                                self.connect(config, timeout=15)
                             except Exception as exc:
                                 logger.error(
                                     "MCP reconnect failed for '%s': %s", name, exc

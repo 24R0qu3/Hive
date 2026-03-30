@@ -116,6 +116,12 @@ def test_sub_commands_mcp_has_manage():
     assert "manage" in SUB_COMMANDS["/mcp"]
 
 
+def test_sub_commands_use_has_all_and_none():
+    assert "/use" in SUB_COMMANDS
+    assert "all" in SUB_COMMANDS["/use"]
+    assert "none" in SUB_COMMANDS["/use"]
+
+
 # ---------------------------------------------------------------------------
 # _list_commands
 # ---------------------------------------------------------------------------
@@ -273,3 +279,17 @@ def test_system_prompt_mentions_commands():
 
 def test_system_prompt_mentions_slash_commands():
     assert "/" in SYSTEM_PROMPT
+
+
+def test_registry_contains_use():
+    names = [cmd.name for cmd in COMMAND_REGISTRY]
+    assert "/use" in names
+
+
+def test_use_command_has_notes():
+    cmd = next(c for c in COMMAND_REGISTRY if c.name == "/use")
+    assert cmd.notes is not None and len(cmd.notes) > 0
+
+
+def test_system_prompt_mentions_use_command():
+    assert "/use" in SYSTEM_PROMPT

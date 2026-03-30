@@ -287,6 +287,11 @@ def build_mcp_panel(
         style = "bold #FFC107" if selected else ""
 
         name_part = config.name
+        scope_part = (
+            "  [dim][global][/dim]"
+            if getattr(config, "scope", "local") == "global"
+            else ""
+        )
         enabled_part = "" if config.enabled else "  [dim][disabled][/dim]"
 
         if config.name in reconnecting_names:
@@ -302,7 +307,8 @@ def build_mcp_panel(
         row = Text.assemble(
             (prefix, style),
             (name_part, style),
-            (enabled_part, ""),
+            Text.from_markup(scope_part),
+            Text.from_markup(enabled_part),
             ("  ", ""),
             (status, status_style),
         )

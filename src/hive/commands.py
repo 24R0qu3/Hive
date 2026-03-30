@@ -66,6 +66,21 @@ COMMAND_REGISTRY: list[CommandDoc] = [
         ),
     ),
     CommandDoc(
+        name="/use",
+        usage="/use [<server> | all | none]",
+        description=(
+            "Activate full MCP tool schemas for the AI. "
+            "Without an argument, shows currently active servers. "
+            "Use '/use <name>' to toggle a server on or off, "
+            "'/use all' to activate all connected servers, "
+            "'/use none' to deactivate all."
+        ),
+        notes=(
+            "Active servers' full tool schemas are included in every AI request. "
+            "A compact tool listing is always visible to the model regardless of activation."
+        ),
+    ),
+    CommandDoc(
         name="/agent",
         usage="/agent <name> <goal>  |  /agent list  |  /agent add  |  /agent delete <name>  |  /agent edit <name>  |  /agent copy <name> local|global",
         description=(
@@ -90,6 +105,7 @@ COMMAND_NAMES: list[str] = [cmd.name for cmd in COMMAND_REGISTRY]
 SUB_COMMANDS: dict[str, list[str]] = {
     "/agent": ["add", "list", "delete", "edit", "copy"],
     "/mcp": ["manage"],
+    "/use": ["all", "none"],
 }
 
 # System prompt: includes the full command list so any model can answer questions about them.
@@ -102,9 +118,14 @@ SYSTEM_PROMPT = (
     + "\n\nRules:\n"
     "- Never mention, suggest, or describe a command that is not in the list above.\n"
     "- If a user asks about a command that is not in the list, tell them it does not exist.\n"
-    "- Use the 'shell' tool to run shell commands when needed (e.g. to inspect files, "
-    "list directories, or gather information). Do not fabricate command output.\n"
-    "- When asked what commands are available, list only the commands above."
+    "- To run shell commands, ALWAYS call the 'shell' tool directly — never describe or "
+    "suggest a command, just call the tool and show the real output. Do not fabricate output.\n"
+    "- Slash commands (like /agent) are typed by the USER in the input field. You cannot "
+    "invoke slash commands yourself. If asked to 'run an agent', use your tools directly instead.\n"
+    "- When asked what commands are available, list only the commands above.\n"
+    "- MCP servers are listed in the context when connected. Their full tool schemas are only "
+    "included when the user activates them with /use <name>. If a user asks to do something "
+    "that requires an MCP tool and no schemas are active, tell them to run /use <server-name> first."
 )
 
 # ---------------------------------------------------------------------------

@@ -247,6 +247,60 @@ def test_handle_model_trailing_space_opens_picker(hive_app, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# handle_input — /use
+# ---------------------------------------------------------------------------
+
+
+def test_handle_use_no_arg_prints_none_active_message(hive_app):
+    hive_app.handle_input("/use")
+    output = "\n".join(hive_app._output_lines)
+    assert "No MCP" in output or "active" in output.lower()
+
+
+def test_handle_use_unknown_server_prints_error(hive_app):
+    hive_app.handle_input("/use ghost_server")
+    output = "\n".join(hive_app._output_lines)
+    assert "ghost_server" in output
+    assert "ghost_server" not in hive_app._active_mcp_servers
+
+
+def test_handle_use_activates_connected_server(hive_app, monkeypatch):
+    monkeypatch.setattr(hive_app._mcp, "servers", lambda: {"myserver": object()})
+    hive_app.handle_input("/use myserver")
+    assert "myserver" in hive_app._active_mcp_servers
+
+
+def test_handle_use_toggles_off_active_server(hive_app, monkeypatch):
+    monkeypatch.setattr(hive_app._mcp, "servers", lambda: {"myserver": object()})
+    hive_app._active_mcp_servers.add("myserver")
+    hive_app.handle_input("/use myserver")
+    assert "myserver" not in hive_app._active_mcp_servers
+
+
+def test_handle_use_all_activates_all_connected(hive_app, monkeypatch):
+    monkeypatch.setattr(
+        hive_app._mcp, "servers", lambda: {"alpha": object(), "beta": object()}
+    )
+    hive_app.handle_input("/use all")
+    assert "alpha" in hive_app._active_mcp_servers
+    assert "beta" in hive_app._active_mcp_servers
+
+
+def test_handle_use_none_clears_active_servers(hive_app, monkeypatch):
+    monkeypatch.setattr(hive_app._mcp, "servers", lambda: {"alpha": object()})
+    hive_app._active_mcp_servers = {"alpha", "beta"}
+    hive_app.handle_input("/use none")
+    assert hive_app._active_mcp_servers == set()
+
+
+def test_handle_use_shows_available_when_connected(hive_app, monkeypatch):
+    monkeypatch.setattr(hive_app._mcp, "servers", lambda: {"myserver": object()})
+    hive_app.handle_input("/use")
+    output = "\n".join(hive_app._output_lines)
+    assert "myserver" in output
+
+
+# ---------------------------------------------------------------------------
 # handle_input — non-command routes to AI
 # ---------------------------------------------------------------------------
 

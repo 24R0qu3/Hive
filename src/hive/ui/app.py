@@ -49,7 +49,9 @@ from hive.workspace import (
     DEFAULT_SUMMARIZATION_TOKEN_LIMIT,
     Session,
     create_workspace,
+    get_global_mcp_configs,
     get_language,
+    get_local_mcp_configs,
     get_mcp_configs,
     get_model,
     get_summarization_token_limit,
@@ -62,6 +64,7 @@ from hive.workspace import (
     save_agent_config,
     save_conversation,
     save_full_conversation,
+    save_global_mcp_configs,
     save_mcp_configs,
     save_output,
     set_language,
@@ -258,6 +261,7 @@ class HiveApp:
         self._mcp_confirm_delete: str | None = None
         self._mcp_reconnecting: set[str] = set()
         self._mcp_tools_unsupported_shown: bool = False
+        self._active_mcp_servers: set[str] = set()
 
         # MCP add-server wizard state
         self._mcp_adding: bool = False
@@ -565,16 +569,21 @@ class HiveApp:
                 return
             config = self._mcp_configs[self._mcp_idx]
             config.enabled = not config.enabled
-            save_mcp_configs(self._cwd, [c.to_dict() for c in self._mcp_configs])
+            self._save_mcp_configs_all()
             if config.enabled:
                 threading.Thread(
                     target=self._connect_mcp_server, args=(config,), daemon=True
                 ).start()
                 self.print(t("mcp.manage.enabled", self._lang).format(name=config.name))
             else:
-                threading.Thread(
-                    target=lambda: self._mcp.disconnect(config.name), daemon=True
-                ).start()
+
+                def _do_disable(name=config.name):
+                    self._mcp.disconnect(name)
+                    self._mcp_panel_key = (-1, -1)
+                    if self.app.is_running:
+                        self.app.invalidate()
+
+                threading.Thread(target=_do_disable, daemon=True).start()
                 self.print(
                     t("mcp.manage.disabled", self._lang).format(name=config.name)
                 )
@@ -616,12 +625,17 @@ class HiveApp:
                 self._mcp_panel_key = (-1, -1)
                 event.app.invalidate()
                 return
+
             # Confirmed — delete
-            threading.Thread(
-                target=lambda: self._mcp.disconnect(name), daemon=True
-            ).start()
+            def _do_delete(name=name):
+                self._mcp.disconnect(name)
+                self._mcp_panel_key = (-1, -1)
+                if self.app.is_running:
+                    self.app.invalidate()
+
+            threading.Thread(target=_do_delete, daemon=True).start()
             self._mcp_configs = [c for c in self._mcp_configs if c.name != name]
-            save_mcp_configs(self._cwd, [c.to_dict() for c in self._mcp_configs])
+            self._save_mcp_configs_all()
             self._mcp_idx = min(self._mcp_idx, max(0, len(self._mcp_configs) - 1))
             self._mcp_confirm_delete = None
             self._mcp_panel_key = (-1, -1)
@@ -686,7 +700,7 @@ class HiveApp:
                 env=raw_env,
             )
             self._mcp_configs.append(new_config)
-            save_mcp_configs(self._cwd, [c.to_dict() for c in self._mcp_configs])
+            self._save_mcp_configs_all()
             threading.Thread(
                 target=self._connect_mcp_server, args=(new_config,), daemon=True
             ).start()
@@ -1393,9 +1407,16 @@ class HiveApp:
             parts = text.split(None, 1)
             sub = parts[1].strip() if len(parts) > 1 else ""
             if sub == "manage":
-                self._mcp_configs = [
-                    MCPServerConfig.from_dict(d) for d in get_mcp_configs(self._cwd)
-                ]
+                _merged: dict[str, MCPServerConfig] = {}
+                for d in get_global_mcp_configs():
+                    cfg = MCPServerConfig.from_dict(d)
+                    cfg.scope = "global"
+                    _merged[cfg.name] = cfg
+                for d in get_local_mcp_configs(self._cwd):
+                    cfg = MCPServerConfig.from_dict(d)
+                    cfg.scope = "local"
+                    _merged[cfg.name] = cfg
+                self._mcp_configs = list(_merged.values())
                 self._mcp_idx = 0
                 self._mcp_panel_key = (-1, -1)
                 self._mcp_confirm_delete = None
@@ -1415,6 +1436,45 @@ class HiveApp:
             for name, conn in servers.items():
                 table.add_row(name, str(len(conn.tools)))
             self.print(table)
+            return
+
+        if text == "/use" or text.startswith("/use "):
+            parts = text.split(None, 1)
+            sub = parts[1].strip() if len(parts) > 1 else ""
+            connected = set(self._mcp.servers().keys())
+            if not sub:
+                if self._active_mcp_servers:
+                    self.print(
+                        t("use.active", self._lang).format(
+                            servers=", ".join(sorted(self._active_mcp_servers))
+                        )
+                    )
+                else:
+                    self.print(t("use.none_active", self._lang))
+                if connected:
+                    self.print(
+                        t("use.available", self._lang).format(
+                            servers=", ".join(sorted(connected))
+                        )
+                    )
+                return
+            if sub == "all":
+                self._active_mcp_servers = set(connected)
+                self.print(t("use.activated_all", self._lang))
+                return
+            if sub == "none":
+                self._active_mcp_servers.clear()
+                self.print(t("use.deactivated_all", self._lang))
+                return
+            if sub not in connected:
+                self.print(t("use.not_connected", self._lang).format(name=sub))
+                return
+            if sub in self._active_mcp_servers:
+                self._active_mcp_servers.discard(sub)
+                self.print(t("use.deactivated", self._lang).format(name=sub))
+            else:
+                self._active_mcp_servers.add(sub)
+                self.print(t("use.activated", self._lang).format(name=sub))
             return
 
         if text.startswith("/model"):
@@ -1631,7 +1691,11 @@ class HiveApp:
         self._ai_thinking = True
 
         width = self._current_width()
-        mcp_tools = self._mcp.list_tools()
+        mcp_tools = [
+            tool
+            for tool in self._mcp.list_tools()
+            if tool["function"]["name"].split("__")[0] in self._active_mcp_servers
+        ]
         all_tools = AI_TOOLS + mcp_tools
 
         def _tool_executor(name: str, args: dict) -> str:
@@ -1728,7 +1792,11 @@ class HiveApp:
         tools_unsupported_flag: list[bool] = [False]
         width = self._current_width()
 
-        mcp_tools = self._mcp.list_tools()
+        mcp_tools = [
+            tool
+            for tool in self._mcp.list_tools()
+            if tool["function"]["name"].split("__")[0] in self._active_mcp_servers
+        ]
         all_tools = AI_TOOLS + mcp_tools
 
         def _tool_executor(name: str, args: dict) -> str:
@@ -1743,6 +1811,14 @@ class HiveApp:
             + f"\n\nCurrent working directory: {self._cwd}"
             + f"\nOperating system: {_platform.system()} {_platform.release()}"
         )
+        manifest = self._mcp.compact_manifest()
+        if manifest:
+            system_content += f"\n\n{manifest}"
+        if self._active_mcp_servers:
+            system_content += (
+                "\nActive MCP servers (full schemas included): "
+                + ", ".join(sorted(self._active_mcp_servers))
+            )
 
         def _ai_thread() -> None:
             try:
@@ -1787,7 +1863,11 @@ class HiveApp:
                 self._maybe_summarize()
                 reply_lines = self._render_to_lines(reply, width=width)
                 self._output_lines[thinking_idx : thinking_idx + 1] = reply_lines
-                if tools_unsupported_flag[0] and not self._mcp_tools_unsupported_shown:
+                if (
+                    tools_unsupported_flag[0]
+                    and mcp_tools
+                    and not self._mcp_tools_unsupported_shown
+                ):
                     self._mcp_tools_unsupported_shown = True
                     self._output_lines.extend(
                         self._render_to_lines(
@@ -1802,6 +1882,13 @@ class HiveApp:
         threading.Thread(target=_ai_thread, daemon=True).start()
         threading.Thread(target=_anim_thread, daemon=True).start()
 
+    def _save_mcp_configs_all(self) -> None:
+        """Persist self._mcp_configs back to the correct scope files."""
+        global_cfgs = [c.to_dict() for c in self._mcp_configs if c.scope == "global"]
+        local_cfgs = [c.to_dict() for c in self._mcp_configs if c.scope == "local"]
+        save_global_mcp_configs(global_cfgs)
+        save_mcp_configs(self._cwd, local_cfgs)
+
     def _connect_mcp_server(self, config: MCPServerConfig) -> None:
         """Connect to one MCP server in a background thread; print on error."""
         try:
@@ -1809,6 +1896,10 @@ class HiveApp:
             logger.info("MCP: connected to '%s'", config.name)
         except Exception as exc:
             self.print(t("mcp.error", self._lang).format(name=config.name, error=exc))
+        finally:
+            self._mcp_panel_key = (-1, -1)
+            if self.app.is_running:
+                self.app.invalidate()
 
     def _startup_checks(self) -> None:
         """Run health checks in a background thread and print warnings."""

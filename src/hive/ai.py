@@ -52,14 +52,20 @@ class AIProvider(Protocol):
         ...
 
 
+DEFAULT_NUM_CTX = 8192
+
+
 class OllamaProvider:
     """Ollama local REST API provider.
 
     Swap this out for any class that implements AIProvider.
     """
 
-    def __init__(self, base_url: str = DEFAULT_BASE_URL) -> None:
+    def __init__(
+        self, base_url: str = DEFAULT_BASE_URL, num_ctx: int = DEFAULT_NUM_CTX
+    ) -> None:
         self.base_url = base_url.rstrip("/")
+        self.num_ctx = num_ctx
 
     def chat(
         self,
@@ -87,7 +93,12 @@ class OllamaProvider:
     ) -> str:
         conversation = list(messages)
         for _ in range(10):  # max tool-call rounds
-            payload: dict = {"model": model, "messages": conversation, "stream": False}
+            payload: dict = {
+                "model": model,
+                "messages": conversation,
+                "stream": False,
+                "options": {"num_ctx": self.num_ctx},
+            }
             if tools:
                 payload["tools"] = tools
 
@@ -116,9 +127,14 @@ class OllamaProvider:
 
         # Exceeded max rounds — do a final plain call
         return (
-            self._post({"model": model, "messages": conversation, "stream": False})[
-                "message"
-            ].get("content")
+            self._post(
+                {
+                    "model": model,
+                    "messages": conversation,
+                    "stream": False,
+                    "options": {"num_ctx": self.num_ctx},
+                }
+            )["message"].get("content")
             or ""
         )
 
@@ -135,9 +151,18 @@ class OllamaProvider:
                 body = json.loads(resp.read())
                 return body
         except urllib.error.HTTPError as exc:
-            # Ollama returns 400 when the model doesn't support tools.
             msg = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
+            # Ollama returns 400 for unsupported tools, but some models crash
+            # with 500 when a tools payload is sent to a model without a tool
+            # template (e.g. qwen3.5). Treat both as tools-not-supported so the
+            # caller can retry without tools.
             if exc.code == 400 and "tool" in msg.lower():
+                raise _ToolsNotSupported() from exc
+            if exc.code == 500 and (
+                "model runner" in msg.lower()
+                or "resource limit" in msg.lower()
+                or "unexpectedly stopped" in msg.lower()
+            ):
                 raise _ToolsNotSupported() from exc
             raise ConnectionError(
                 f"Ollama error {exc.code} at {self.base_url}: {msg}"
@@ -171,7 +196,12 @@ class OllamaProvider:
         model: str,
         tools: list[dict] | None,
     ) -> tuple[str, list[dict]]:
-        payload: dict = {"model": model, "messages": messages, "stream": False}
+        payload: dict = {
+            "model": model,
+            "messages": messages,
+            "stream": False,
+            "options": {"num_ctx": self.num_ctx},
+        }
         if tools:
             payload["tools"] = tools
         data = self._post(payload)

@@ -230,12 +230,41 @@ def set_summarization_token_limit(cwd: Path, limit: int) -> None:
     save_config(cwd, config)
 
 
-def get_mcp_configs(cwd: Path) -> list[dict]:
+def get_global_mcp_dir() -> Path:
+    """Return the platform-appropriate global MCP config directory (~/.config/hive/)."""
+    return Path(user_config_dir("hive", appauthor=False))
+
+
+def get_global_mcp_configs() -> list[dict]:
+    """Read ~/.config/hive/mcp.json, returning [] if missing."""
+    path = get_global_mcp_dir() / "mcp.json"
+    if not path.exists():
+        return []
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def save_global_mcp_configs(configs: list[dict]) -> None:
+    """Write ~/.config/hive/mcp.json."""
+    directory = get_global_mcp_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "mcp.json"
+    path.write_text(json.dumps(configs, indent=2), encoding="utf-8")
+
+
+def get_local_mcp_configs(cwd: Path) -> list[dict]:
     """Read .hive/mcp.json, returning [] if missing."""
     path = _hive_path(cwd) / "mcp.json"
     if not path.exists():
         return []
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def get_mcp_configs(cwd: Path) -> list[dict]:
+    """Return merged MCP configs: global + local, local names override global."""
+    global_configs = {c["name"]: c for c in get_global_mcp_configs()}
+    local_configs = {c["name"]: c for c in get_local_mcp_configs(cwd)}
+    merged = {**global_configs, **local_configs}
+    return list(merged.values())
 
 
 def save_mcp_configs(cwd: Path, configs: list[dict]) -> None:

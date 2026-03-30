@@ -80,6 +80,10 @@ Type a command in the input field and press `Enter`:
 | `/model <name>` | Set the AI model for this session (e.g. `/model mistral`) |
 | `/mcp` | List connected MCP servers and their tools |
 | `/mcp manage` | Open the interactive MCP server manager |
+| `/use` | Show active MCP servers and what is connected |
+| `/use <name>` | Toggle full tool schemas for a server on/off |
+| `/use all` | Activate all connected MCP servers |
+| `/use none` | Deactivate all MCP servers |
 | `/agent list` | List all available agents |
 | `/agent <name> <goal>` | Run a named agent on a goal |
 | `/agent add` | Define a new custom agent via a step-by-step wizard |
@@ -242,6 +246,23 @@ Connected servers are shown in the welcome panel (`⬡ gitmcp, gitscribe`) and u
 ### Tool naming
 
 Tools from MCP servers are prefixed with the server name: `gitmcp__commit`, `gitscribe__generate_commit_message`, etc. This prevents collisions and lets you restrict agents to specific servers via the `tools` field.
+
+### Context management with /use
+
+MCP tool schemas can be large. To keep local model context lean, Hive separates **awareness** from **activation**:
+
+- **Compact manifest (always on)** — A brief list of connected servers and their tool names is injected into the system prompt on every request. The model knows what is available without receiving full parameter schemas.
+- **Full schemas (activation required)** — Use `/use <name>` to include the complete JSON schemas for a server in AI requests. Only activate what you need for the current task.
+
+```
+/use                    # show active servers and what is connected
+/use filesystem         # toggle filesystem server on (full schemas included)
+/use filesystem         # toggle it off again
+/use all                # activate every connected server
+/use none               # deactivate all
+```
+
+When a server is active, the model can call its tools directly. When inactive, the model sees tool names but will ask you to run `/use <name>` before it can use them. This saves 50–90 % of tool-schema tokens for typical local model context windows.
 
 ## Log file location
 

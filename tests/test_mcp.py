@@ -113,17 +113,20 @@ def test_mcp_server_config_from_dict_defaults_args_when_absent():
 # ---------------------------------------------------------------------------
 
 
-def test_get_mcp_configs_returns_empty_list_when_file_absent(tmp_path):
+def test_get_mcp_configs_returns_empty_list_when_file_absent(tmp_path, monkeypatch):
+    monkeypatch.setattr("hive.workspace.get_global_mcp_configs", lambda: [])
     create_workspace(tmp_path)
     assert get_mcp_configs(tmp_path) == []
 
 
-def test_get_mcp_configs_returns_empty_list_when_no_workspace(tmp_path):
+def test_get_mcp_configs_returns_empty_list_when_no_workspace(tmp_path, monkeypatch):
+    monkeypatch.setattr("hive.workspace.get_global_mcp_configs", lambda: [])
     # No .hive/ dir at all
     assert get_mcp_configs(tmp_path) == []
 
 
-def test_save_and_get_mcp_configs_roundtrip(tmp_path):
+def test_save_and_get_mcp_configs_roundtrip(tmp_path, monkeypatch):
+    monkeypatch.setattr("hive.workspace.get_global_mcp_configs", lambda: [])
     create_workspace(tmp_path)
     configs = [
         {
@@ -157,7 +160,8 @@ def test_save_mcp_configs_writes_valid_json(tmp_path):
     assert parsed == configs
 
 
-def test_save_mcp_configs_overwrites_previous(tmp_path):
+def test_save_mcp_configs_overwrites_previous(tmp_path, monkeypatch):
+    monkeypatch.setattr("hive.workspace.get_global_mcp_configs", lambda: [])
     create_workspace(tmp_path)
     save_mcp_configs(
         tmp_path,
@@ -269,4 +273,108 @@ def test_mcp_manager_disconnect_unknown_name_does_not_raise():
         # disconnect on a non-existent name must be a no-op
         mgr.disconnect("nonexistent")
     finally:
+        mgr.shutdown(timeout=1)
+
+
+# ---------------------------------------------------------------------------
+# compact_manifest
+# ---------------------------------------------------------------------------
+
+
+def test_compact_manifest_returns_none_when_no_servers():
+    mgr = _make_manager()
+    try:
+        assert mgr.compact_manifest() is None
+    finally:
+        mgr.shutdown(timeout=1)
+
+
+def test_compact_manifest_returns_string_with_connected_server(monkeypatch):
+    from unittest.mock import MagicMock
+
+    from hive.mcp import _ServerConn
+
+    mgr = _make_manager()
+    try:
+        tool_a = MagicMock()
+        tool_a.name = "read_file"
+        tool_b = MagicMock()
+        tool_b.name = "write_file"
+        config = MCPServerConfig(name="fs", command="uvx fs")
+        fake_task = MagicMock()
+        conn = _ServerConn(
+            session=MagicMock(),
+            tools=[tool_a, tool_b],
+            config=config,
+            task=fake_task,
+        )
+        with mgr._lock:
+            mgr._conns["fs"] = conn
+
+        result = mgr.compact_manifest()
+        assert result is not None
+        assert "fs" in result
+        assert "read_file" in result
+        assert "write_file" in result
+    finally:
+        with mgr._lock:
+            mgr._conns.clear()
+        mgr.shutdown(timeout=1)
+
+
+def test_compact_manifest_caps_at_ten_tools(monkeypatch):
+    from unittest.mock import MagicMock
+
+    from hive.mcp import _ServerConn
+
+    mgr = _make_manager()
+    try:
+        tools = []
+        for i in range(15):
+            t = MagicMock()
+            t.name = f"tool_{i}"
+            tools.append(t)
+        config = MCPServerConfig(name="big", command="cmd")
+        conn = _ServerConn(
+            session=MagicMock(),
+            tools=tools,
+            config=config,
+            task=MagicMock(),
+        )
+        with mgr._lock:
+            mgr._conns["big"] = conn
+
+        result = mgr.compact_manifest()
+        assert result is not None
+        assert "+5 more" in result
+    finally:
+        with mgr._lock:
+            mgr._conns.clear()
+        mgr.shutdown(timeout=1)
+
+
+def test_compact_manifest_includes_hint_line():
+    from unittest.mock import MagicMock
+
+    from hive.mcp import _ServerConn
+
+    mgr = _make_manager()
+    try:
+        t = MagicMock()
+        t.name = "do_thing"
+        config = MCPServerConfig(name="srv", command="cmd")
+        conn = _ServerConn(
+            session=MagicMock(),
+            tools=[t],
+            config=config,
+            task=MagicMock(),
+        )
+        with mgr._lock:
+            mgr._conns["srv"] = conn
+
+        result = mgr.compact_manifest()
+        assert "/use" in result
+    finally:
+        with mgr._lock:
+            mgr._conns.clear()
         mgr.shutdown(timeout=1)

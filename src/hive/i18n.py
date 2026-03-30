@@ -66,6 +66,15 @@ _STRINGS: dict[str, dict[str, str]] = {
         "mcp.manage.enabled": "Enabled MCP server '{name}'.",
         "mcp.manage.disabled": "Disabled MCP server '{name}'.",
         "mcp.manage.reconnecting": "Reconnecting to '{name}'…",
+        # /use command
+        "use.active": "Active MCP servers: {servers}",
+        "use.none_active": "No MCP servers active. Use /use <name> to activate one.",
+        "use.available": "Connected servers: {servers}",
+        "use.activated": "Activated '{name}' — full tool schemas included in AI requests.",
+        "use.deactivated": "Deactivated '{name}'.",
+        "use.activated_all": "Activated all connected MCP servers.",
+        "use.deactivated_all": "Deactivated all MCP servers.",
+        "use.not_connected": "'{name}' is not connected. Use /mcp to see connected servers.",
         # startup checks
         "startup.ollama_unreachable": "[yellow]Warning:[/yellow] Ollama is not reachable at {url}. AI responses will fail until Ollama is running.",
         "startup.gitscribe_no_key": "[yellow]Warning:[/yellow] 'gitscribe' MCP server is connected but ANTHROPIC_API_KEY is not set. Gitscribe tools will not work.",
@@ -128,6 +137,15 @@ _STRINGS: dict[str, dict[str, str]] = {
         "mcp.manage.enabled": "MCP-Server '{name}' aktiviert.",
         "mcp.manage.disabled": "MCP-Server '{name}' deaktiviert.",
         "mcp.manage.reconnecting": "Verbinde mit '{name}'…",
+        # /use command
+        "use.active": "Aktive MCP-Server: {servers}",
+        "use.none_active": "Keine MCP-Server aktiv. Mit /use <name> aktivieren.",
+        "use.available": "Verbundene Server: {servers}",
+        "use.activated": "'{name}' aktiviert — vollständige Tool-Schemata in KI-Anfragen enthalten.",
+        "use.deactivated": "'{name}' deaktiviert.",
+        "use.activated_all": "Alle verbundenen MCP-Server aktiviert.",
+        "use.deactivated_all": "Alle MCP-Server deaktiviert.",
+        "use.not_connected": "'{name}' ist nicht verbunden. Mit /mcp verbundene Server anzeigen.",
         # startup checks
         "startup.ollama_unreachable": "[yellow]Warnung:[/yellow] Ollama ist nicht erreichbar unter {url}. KI-Antworten schlagen fehl, bis Ollama läuft.",
         "startup.gitscribe_no_key": "[yellow]Warnung:[/yellow] 'gitscribe' MCP-Server ist verbunden, aber ANTHROPIC_API_KEY ist nicht gesetzt. Gitscribe-Tools sind nicht verfügbar.",
