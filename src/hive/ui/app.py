@@ -1439,8 +1439,10 @@ class HiveApp:
             return
 
         if text == "/use" or text.startswith("/use "):
-            parts = text.split(None, 1)
+            # Split into at most 3 parts: "/use", <server>, <optional query>
+            parts = text.split(None, 2)
             sub = parts[1].strip() if len(parts) > 1 else ""
+            query = parts[2].strip() if len(parts) > 2 else ""
             connected = set(self._mcp.servers().keys())
             if not sub:
                 if self._active_mcp_servers:
@@ -1468,6 +1470,14 @@ class HiveApp:
                 return
             if sub not in connected:
                 self.print(t("use.not_connected", self._lang).format(name=sub))
+                return
+            if query:
+                # Activate the server (if not already) and immediately route
+                # the query to the AI — e.g. "/use engra search for X"
+                if sub not in self._active_mcp_servers:
+                    self._active_mcp_servers.add(sub)
+                    self.print(t("use.activated", self._lang).format(name=sub))
+                self._start_ai_response(query)
                 return
             if sub in self._active_mcp_servers:
                 self._active_mcp_servers.discard(sub)

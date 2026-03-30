@@ -255,11 +255,11 @@ MCP tool schemas can be large. To keep local model context lean, Hive separates 
 - **Full schemas (activation required)** — Use `/use <name>` to include the complete JSON schemas for a server in AI requests. Only activate what you need for the current task.
 
 ```
-/use                    # show active servers and what is connected
-/use filesystem         # toggle filesystem server on (full schemas included)
-/use filesystem         # toggle it off again
-/use all                # activate every connected server
-/use none               # deactivate all
+/use                              # show active servers and what is connected
+/use filesystem                   # toggle filesystem server on/off
+/use all                          # activate every connected server
+/use none                         # deactivate all
+/use engra search for X in proj   # activate engra and immediately ask the AI
 ```
 
 When a server is active, the model can call its tools directly. When inactive, the model sees tool names but will ask you to run `/use <name>` before it can use them. This saves 50–90 % of tool-schema tokens for typical local model context windows.
