@@ -118,3 +118,37 @@ def test_set_user_name_writes_valid_json(user_dir):
 def test_has_user_name_true_after_set(user_dir):
     user_mod.set_user_name("Karl")
     assert user_mod.has_user_name() is True
+
+
+# ---------------------------------------------------------------------------
+# get_warned_flags / set_warned_flag
+# ---------------------------------------------------------------------------
+
+
+def test_get_warned_flags_empty_when_no_file(user_dir):
+    assert user_mod.get_warned_flags() == set()
+
+
+def test_set_warned_flag_creates_entry(user_dir):
+    user_mod.set_warned_flag("some_key")
+    assert "some_key" in user_mod.get_warned_flags()
+
+
+def test_set_warned_flag_multiple_keys(user_dir):
+    user_mod.set_warned_flag("key_a")
+    user_mod.set_warned_flag("key_b")
+    flags = user_mod.get_warned_flags()
+    assert "key_a" in flags
+    assert "key_b" in flags
+
+
+def test_set_warned_flag_idempotent(user_dir):
+    user_mod.set_warned_flag("x")
+    user_mod.set_warned_flag("x")
+    assert list(user_mod.get_warned_flags()).count("x") == 1
+
+
+def test_set_warned_flag_preserves_user_name(user_dir):
+    user_mod.set_user_name("Lena")
+    user_mod.set_warned_flag("foo")
+    assert user_mod.get_user_name() == "Lena"

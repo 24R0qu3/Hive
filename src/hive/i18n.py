@@ -66,6 +66,9 @@ _STRINGS: dict[str, dict[str, str]] = {
         "mcp.manage.enabled": "Enabled MCP server '{name}'.",
         "mcp.manage.disabled": "Disabled MCP server '{name}'.",
         "mcp.manage.reconnecting": "Reconnecting to '{name}'…",
+        # startup checks
+        "startup.ollama_unreachable": "[yellow]Warning:[/yellow] Ollama is not reachable at {url}. AI responses will fail until Ollama is running.",
+        "startup.gitscribe_no_key": "[yellow]Warning:[/yellow] 'gitscribe' MCP server is connected but ANTHROPIC_API_KEY is not set. Gitscribe tools will not work.",
         # exit hint
         "exit.resume": "To resume:  hive --resume {id}",
     },
@@ -125,6 +128,9 @@ _STRINGS: dict[str, dict[str, str]] = {
         "mcp.manage.enabled": "MCP-Server '{name}' aktiviert.",
         "mcp.manage.disabled": "MCP-Server '{name}' deaktiviert.",
         "mcp.manage.reconnecting": "Verbinde mit '{name}'…",
+        # startup checks
+        "startup.ollama_unreachable": "[yellow]Warnung:[/yellow] Ollama ist nicht erreichbar unter {url}. KI-Antworten schlagen fehl, bis Ollama läuft.",
+        "startup.gitscribe_no_key": "[yellow]Warnung:[/yellow] 'gitscribe' MCP-Server ist verbunden, aber ANTHROPIC_API_KEY ist nicht gesetzt. Gitscribe-Tools sind nicht verfügbar.",
         # exit hint
         "exit.resume": "Fortsetzen mit:  hive --resume {id}",
     },
