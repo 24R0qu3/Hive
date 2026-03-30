@@ -73,7 +73,7 @@ COMMAND_REGISTRY: list[CommandDoc] = [
             "Use '/agent list' to see available agents, "
             "'/agent add' to define a new one, "
             "'/agent delete' to remove one, "
-            "'/agent edit' to open its JSON in your editor."
+            "'/agent edit' to open its Markdown file in your editor."
         ),
         notes=(
             "Agents run autonomously using tools until the goal is complete "

@@ -83,7 +83,7 @@ Type a command in the input field and press `Enter`:
 | `/agent <name> <goal>` | Run a named agent on a goal |
 | `/agent add` | Define a new custom agent via a step-by-step wizard |
 | `/agent delete <name>` | Delete a user-defined agent |
-| `/agent edit <name>` | Open a user-defined agent's JSON in your editor |
+| `/agent edit <name>` | Open a user-defined agent's Markdown file in your editor |
 | `/exit` | Exit Hive |
 
 As you type, a suggestion bar appears below the input showing matching commands. Use `Tab` or `↑`/`↓` to select, `Enter` to accept. Sub-commands are suggested automatically once you complete a command — e.g. typing `/agent ` shows `add`, `list`, `delete`, `edit`. Both the command and its sub-command are highlighted in the input field.
@@ -171,7 +171,7 @@ The agent also receives context automatically: current OS, working directory, an
 | `/agent list` | Show all available agents (built-in + custom) |
 | `/agent add` | Start a step-by-step wizard to create a new agent |
 | `/agent delete <name>` | Remove a user-defined agent |
-| `/agent edit <name>` | Open the agent's JSON in your system editor (`$EDITOR`) |
+| `/agent edit <name>` | Open the agent's Markdown file in your system editor (`$EDITOR`) |
 
 ### Adding a custom agent
 
@@ -183,22 +183,25 @@ Run `/agent add` to start an interactive wizard. You will be prompted for:
 4. **Tools** — comma-separated tool names to restrict the agent to (empty = all tools)
 5. **Max steps** — hard cap on autonomous iterations (default: 10)
 
-Custom agents are saved to `.hive/agents/<name>.json` and can be version-controlled alongside your project.
+Custom agents are saved to `.hive/agents/<name>.md` and can be version-controlled alongside your project.
 
 You can also create agent files manually:
 
-```json
-{
-  "name": "my-agent",
-  "description": "Does something useful",
-  "system_prompt": "You are an agent that...\nWhen done, say TASK_COMPLETE.",
-  "tools": ["shell"],
-  "max_steps": 10,
-  "stop_phrase": "TASK_COMPLETE"
-}
+```markdown
+---
+name: my-agent
+description: Does something useful
+tools:
+  - shell
+max_steps: 10
+stop_phrase: TASK_COMPLETE
+---
+
+You are an agent that...
+When done, say TASK_COMPLETE.
 ```
 
-Place the file in `.hive/agents/my-agent.json` and it will appear in `/agent list` immediately.
+Place the file in `.hive/agents/my-agent.md` and it will appear in `/agent list` immediately. Existing `.json` agent files are migrated to `.md` automatically on first load.
 
 ### MCP tools in agents
 
