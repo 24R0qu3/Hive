@@ -295,3 +295,31 @@ def test_chat_falls_back_silently_on_tools_not_supported():
     assert result == "fallback reply"
     assert tools_unsupported is True
     assert call_count[0] == 2  # first with tools (failed), second without
+
+
+# ---------------------------------------------------------------------------
+# OllamaProvider.is_reachable
+# ---------------------------------------------------------------------------
+
+
+def test_is_reachable_returns_true_when_ollama_responds():
+    provider = OllamaProvider()
+    mock_resp = MagicMock()
+    mock_resp.__enter__ = lambda s: s
+    mock_resp.__exit__ = MagicMock(return_value=False)
+    with patch("urllib.request.urlopen", return_value=mock_resp):
+        assert provider.is_reachable() is True
+
+
+def test_is_reachable_returns_false_on_connection_error():
+    provider = OllamaProvider()
+    with patch("urllib.request.urlopen", side_effect=OSError("refused")):
+        assert provider.is_reachable() is False
+
+
+def test_is_reachable_returns_false_on_timeout():
+    import socket
+
+    provider = OllamaProvider()
+    with patch("urllib.request.urlopen", side_effect=socket.timeout()):
+        assert provider.is_reachable() is False

@@ -44,3 +44,17 @@ def set_user_name(name: str) -> None:
     config = _read()
     config["name"] = name
     _write(config)
+
+
+def get_warned_flags() -> set[str]:
+    """Return the set of one-time warning keys that have already been shown."""
+    return set(_read().get("warned", []))
+
+
+def set_warned_flag(key: str) -> None:
+    """Mark a one-time warning as shown so it is not repeated on next startup."""
+    config = _read()
+    warned = set(config.get("warned", []))
+    warned.add(key)
+    config["warned"] = sorted(warned)
+    _write(config)

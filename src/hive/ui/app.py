@@ -38,7 +38,13 @@ from hive.ui.panels import (
     build_trust_panel,
     build_welcome,
 )
-from hive.user import get_user_name, has_user_name, set_user_name
+from hive.user import (
+    get_user_name,
+    get_warned_flags,
+    has_user_name,
+    set_user_name,
+    set_warned_flag,
+)
 from hive.workspace import (
     DEFAULT_SUMMARIZATION_TOKEN_LIMIT,
     Session,
@@ -1737,6 +1743,32 @@ class HiveApp:
         except Exception as exc:
             self.print(t("mcp.error", self._lang).format(name=config.name, error=exc))
 
+    def _startup_checks(self) -> None:
+        """Run health checks in a background thread and print warnings."""
+        import os
+        import time as _time
+
+        # Small delay so the welcome panel is visible before warnings appear.
+        _time.sleep(1.0)
+
+        if not self._provider.is_reachable():
+            self.print(
+                t("startup.ollama_unreachable", self._lang).format(
+                    url=self._provider.base_url
+                )
+            )
+
+        # One-time gitscribe warning when ANTHROPIC_API_KEY is missing.
+        if "gitscribe_api_key" not in get_warned_flags() and not os.environ.get(
+            "ANTHROPIC_API_KEY"
+        ):
+            for raw in get_mcp_configs(self._cwd):
+                cfg = MCPServerConfig.from_dict(raw)
+                if cfg.enabled and "gitscribe" in cfg.name.lower():
+                    self.print(t("startup.gitscribe_no_key", self._lang))
+                    set_warned_flag("gitscribe_api_key")
+                    break
+
     def run(self):
         logger.debug("HiveApp started")
         # Connect to enabled MCP servers in background threads so startup is
@@ -1749,6 +1781,7 @@ class HiveApp:
                     args=(config,),
                     daemon=True,
                 ).start()
+        threading.Thread(target=self._startup_checks, daemon=True).start()
         try:
             self.app.run()
         finally:

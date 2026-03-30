@@ -179,6 +179,19 @@ class OllamaProvider:
         tool_calls = msg.get("tool_calls") or []
         return msg.get("content") or "", tool_calls
 
+    def is_reachable(self) -> bool:
+        """Return True if Ollama is running and responding within 2 seconds."""
+        req = urllib.request.Request(
+            f"{self.base_url}/api/tags",
+            headers={"Accept": "application/json"},
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=2):
+                return True
+        except Exception:
+            return False
+
     def list_models(self) -> list[str]:
         """Return model names available in Ollama, sorted alphabetically.
 

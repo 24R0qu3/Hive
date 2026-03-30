@@ -121,6 +121,8 @@ Resume with: hive --resume a3f9b2
 
 Hive routes every non-command message to a local [Ollama](https://ollama.com) instance for a multi-turn conversation.
 
+On startup, Hive checks that Ollama is reachable and that required API keys are set. If Ollama is not running, a yellow warning appears in the output area instead of crashing. If a `gitscribe` MCP server is configured but `ANTHROPIC_API_KEY` is missing, a one-time warning is shown.
+
 **Requirements:** Ollama must be running locally (`ollama serve`) and a model must be pulled:
 
 ```bash
