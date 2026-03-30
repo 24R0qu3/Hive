@@ -147,6 +147,7 @@ _AGENT_ADD_PROMPTS = [
     "System prompt (use Ctrl+J for newlines):",
     "Allowed tools, comma-separated (empty = all tools):",
     "Max steps (default 10):",
+    "Scope — 'local' (this project) or 'global' (all projects, default local):",
 ]
 
 
@@ -701,7 +702,14 @@ class HiveApp:
         )
         def agent_add_step_submit(event):
             text = self.input_field.text.strip()
-            step_keys = ["name", "description", "system_prompt", "tools", "max_steps"]
+            step_keys = [
+                "name",
+                "description",
+                "system_prompt",
+                "tools",
+                "max_steps",
+                "scope",
+            ]
             self._agent_add_data[step_keys[self._agent_add_step]] = text
             self.input_field.text = ""
             self._agent_add_step += 1
@@ -720,7 +728,11 @@ class HiveApp:
                 max_steps = int(self._agent_add_data.get("max_steps") or 10)
             except ValueError:
                 max_steps = 10
+            scope = self._agent_add_data.get("scope", "").strip().lower()
+            if scope not in ("local", "global"):
+                scope = "local"
             from hive.agent import AgentDefinition
+            from hive.workspace import save_global_agent_config
 
             defn = AgentDefinition(
                 name=self._agent_add_data["name"],
@@ -728,10 +740,14 @@ class HiveApp:
                 system_prompt=self._agent_add_data["system_prompt"],
                 tools=raw_tools,
                 max_steps=max_steps,
+                scope=scope,
             )
-            save_agent_config(self._cwd, defn.to_dict())
+            if scope == "global":
+                save_global_agent_config(defn.to_dict())
+            else:
+                save_agent_config(self._cwd, defn.to_dict())
             self.print(
-                f"[#FFC107]Agent '{defn.name}' saved.[/#FFC107] "
+                f"[#FFC107]Agent '{defn.name}' saved ({scope}).[/#FFC107] "
                 f"Run it with: /agent {defn.name} <goal>"
             )
             self._agent_adding = False
@@ -1443,6 +1459,13 @@ class HiveApp:
                 name = parts[2].strip() if len(parts) > 2 else ""
                 self._cmd_agent_edit(name)
                 return
+            if sub == "copy":
+                rest = parts[2].strip() if len(parts) > 2 else ""
+                copy_parts = rest.split(None, 1)
+                copy_name = copy_parts[0] if copy_parts else ""
+                copy_target = copy_parts[1].strip() if len(copy_parts) > 1 else ""
+                self._cmd_agent_copy(copy_name, copy_target)
+                return
             goal = parts[2].strip() if len(parts) > 2 else ""
             if not goal:
                 self.print(
@@ -1467,34 +1490,42 @@ class HiveApp:
         table.add_column("Description")
         table.add_column("Tools")
         table.add_column("Max Steps", justify="right")
+        table.add_column("Scope", justify="center")
         for defn in definitions.values():
             tools_str = ", ".join(defn.tools) if defn.tools is not None else "all"
-            table.add_row(defn.name, defn.description, tools_str, str(defn.max_steps))
+            scope_label = {"local": "L", "global": "G", "builtin": "B"}.get(
+                defn.scope, defn.scope
+            )
+            table.add_row(
+                defn.name, defn.description, tools_str, str(defn.max_steps), scope_label
+            )
         self.print(table)
 
     def _cmd_agent_delete(self, name: str) -> None:
         from hive.agent import load_agent_definitions
-        from hive.agents import BUILTIN_AGENTS
-        from hive.workspace import delete_agent_config
+        from hive.workspace import delete_agent_config, delete_global_agent_config
 
         if not name:
             self.print("[yellow]Usage:[/yellow] /agent delete <name>")
             return
-        builtin_names = {a.name for a in BUILTIN_AGENTS}
-        if name in builtin_names:
-            self.print(
-                f"[red]Cannot delete built-in agent '{name}'.[/red] "
-                "Built-in agents are part of Hive."
-            )
-            return
         definitions = load_agent_definitions(self._cwd)
-        if name not in definitions:
+        defn = definitions.get(name)
+        if defn is None:
             self.print(
                 f"[red]Unknown agent '{name}'.[/red] "
                 "Use '/agent list' to see available agents."
             )
             return
-        delete_agent_config(self._cwd, name)
+        if defn.scope == "builtin":
+            self.print(
+                f"[red]Cannot delete built-in agent '{name}'.[/red] "
+                "Built-in agents are part of Hive."
+            )
+            return
+        if defn.scope == "global":
+            delete_global_agent_config(name)
+        else:
+            delete_agent_config(self._cwd, name)
         self.print(f"[#FFC107]Agent '{name}' deleted.[/#FFC107]")
 
     def _cmd_agent_edit(self, name: str) -> None:
@@ -1503,28 +1534,29 @@ class HiveApp:
         import subprocess
 
         from hive.agent import load_agent_definitions
-        from hive.agents import BUILTIN_AGENTS
+        from hive.workspace import get_global_agents_dir
 
         if not name:
             self.print("[yellow]Usage:[/yellow] /agent edit <name>")
             return
-        builtin_names = {a.name for a in BUILTIN_AGENTS}
-        if name in builtin_names:
-            self.print(
-                f"[yellow]'{name}' is a built-in agent.[/yellow] "
-                f"To customise it, copy it to .hive/agents/{name}.json first:\n"
-                f"  /agent list  — view its definition\n"
-                f"  /agent add   — recreate it with your changes"
-            )
-            return
         definitions = load_agent_definitions(self._cwd)
-        if name not in definitions:
+        defn = definitions.get(name)
+        if defn is None:
             self.print(
                 f"[red]Unknown agent '{name}'.[/red] "
                 "Use '/agent list' to see available agents."
             )
             return
-        agent_path = self._cwd / ".hive" / "agents" / f"{name}.md"
+        if defn.scope == "builtin":
+            self.print(
+                f"[yellow]'{name}' is a built-in agent.[/yellow] "
+                f"To customise it, use /agent add to recreate it with your changes."
+            )
+            return
+        if defn.scope == "global":
+            agent_path = get_global_agents_dir() / f"{name}.md"
+        else:
+            agent_path = self._cwd / ".hive" / "agents" / f"{name}.md"
         if not agent_path.exists():
             self.print(f"[red]Agent file not found: {agent_path}[/red]")
             return
@@ -1544,6 +1576,27 @@ class HiveApp:
                 f"[red]Could not open editor ({exc}).[/red]\n"
                 f"Edit manually: {agent_path}"
             )
+
+    def _cmd_agent_copy(self, name: str, target: str) -> None:
+        from hive.agent import load_agent_definitions
+        from hive.workspace import save_agent_config, save_global_agent_config
+
+        if not name or target not in ("local", "global"):
+            self.print("[yellow]Usage:[/yellow] /agent copy <name> local|global")
+            return
+        definitions = load_agent_definitions(self._cwd)
+        defn = definitions.get(name)
+        if defn is None:
+            self.print(
+                f"[red]Unknown agent '{name}'.[/red] "
+                "Use '/agent list' to see available agents."
+            )
+            return
+        if target == "global":
+            save_global_agent_config(defn.to_dict())
+        else:
+            save_agent_config(self._cwd, defn.to_dict())
+        self.print(f"[#FFC107]Agent '{name}' copied to {target} scope.[/#FFC107]")
 
     def _start_agent(self, agent_name: str, goal: str) -> None:
         from hive.agent import AgentRunner, AgentStep, load_agent_definitions

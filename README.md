@@ -168,10 +168,21 @@ The agent also receives context automatically: current OS, working directory, an
 
 | Command | Description |
 |---|---|
-| `/agent list` | Show all available agents (built-in + custom) |
+| `/agent list` | Show all available agents (built-in + custom) with scope column (B/G/L) |
 | `/agent add` | Start a step-by-step wizard to create a new agent |
 | `/agent delete <name>` | Remove a user-defined agent |
 | `/agent edit <name>` | Open the agent's Markdown file in your system editor (`$EDITOR`) |
+| `/agent copy <name> local\|global` | Copy an agent to the other scope |
+
+### Agent scope
+
+Agents have two scopes:
+
+- **Local** (`L`) — stored in `.hive/agents/` inside the current project. Version-controlled with the repo.
+- **Global** (`G`) — stored in the platform user config directory (e.g. `%APPDATA%\hive\agents\` on Windows, `~/.config/hive/agents/` on Linux/macOS). Available in every project.
+- **Built-in** (`B`) — shipped with Hive, read-only.
+
+When the same name exists in multiple scopes, local wins over global, which wins over built-in.
 
 ### Adding a custom agent
 
@@ -182,8 +193,9 @@ Run `/agent add` to start an interactive wizard. You will be prompted for:
 3. **System prompt** — instructions for the agent (use `Ctrl+J` for newlines)
 4. **Tools** — comma-separated tool names to restrict the agent to (empty = all tools)
 5. **Max steps** — hard cap on autonomous iterations (default: 10)
+6. **Scope** — `local` (this project only, default) or `global` (all projects)
 
-Custom agents are saved to `.hive/agents/<name>.md` and can be version-controlled alongside your project.
+Local agents are saved to `.hive/agents/<name>.md` and can be version-controlled alongside your project.
 
 You can also create agent files manually:
 
