@@ -237,33 +237,108 @@ def save_mcp_configs(cwd: Path, configs: list[dict]) -> None:
     path.write_text(json.dumps(configs, indent=2), encoding="utf-8")
 
 
+def _parse_agent_md(text: str) -> dict:
+    """Parse a Markdown agent file (YAML frontmatter + body = system_prompt)."""
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        raise ValueError("Agent file missing --- frontmatter delimiters")
+    frontmatter = parts[1]
+    body = parts[2].lstrip("\n")
+
+    config: dict = {}
+    current_key: str | None = None
+    for line in frontmatter.splitlines():
+        if line.startswith("  - "):
+            if current_key is not None:
+                if not isinstance(config.get(current_key), list):
+                    config[current_key] = []
+                config[current_key].append(line[4:])
+        elif ": " in line:
+            key, _, value = line.partition(": ")
+            current_key = key.strip()
+            config[current_key] = value.strip()
+        elif line.rstrip().endswith(":"):
+            current_key = line.rstrip().rstrip(":")
+            config[current_key] = []
+
+    if "max_steps" in config:
+        try:
+            config["max_steps"] = int(config["max_steps"])
+        except (ValueError, TypeError):
+            pass
+    if "tools" in config and config["tools"] == []:
+        config["tools"] = None
+
+    config["system_prompt"] = body
+    return config
+
+
+def _dump_agent_md(config: dict) -> str:
+    """Serialize an agent config dict to Markdown with YAML frontmatter."""
+    lines = ["---"]
+    for key in ("name", "description"):
+        if key in config:
+            lines.append(f"{key}: {config[key]}")
+    tools = config.get("tools")
+    if tools:
+        lines.append("tools:")
+        for tool in tools:
+            lines.append(f"  - {tool}")
+    else:
+        lines.append("tools:")
+    lines.append(f"max_steps: {config.get('max_steps', 10)}")
+    lines.append(f"stop_phrase: {config.get('stop_phrase', 'TASK_COMPLETE')}")
+    lines.append("---")
+    lines.append("")
+    lines.append(config.get("system_prompt", ""))
+    return "\n".join(lines)
+
+
 def get_agent_configs(cwd: Path) -> list[dict]:
-    """Read all .hive/agents/*.json files, returning [] if directory is missing."""
+    """Read .hive/agents/*.md files (with .json fallback for migration)."""
     agents_dir = _hive_path(cwd) / "agents"
     if not agents_dir.is_dir():
         return []
     configs = []
-    for path in sorted(agents_dir.glob("*.json")):
+    seen: set[str] = set()
+
+    for path in sorted(agents_dir.glob("*.md")):
         try:
-            configs.append(json.loads(path.read_text(encoding="utf-8")))
+            config = _parse_agent_md(path.read_text(encoding="utf-8"))
+            configs.append(config)
+            seen.add(path.stem)
+        except (ValueError, OSError):
+            pass
+
+    # Backwards-compat: migrate any remaining .json files not yet converted.
+    for path in sorted(agents_dir.glob("*.json")):
+        if path.stem in seen:
+            continue
+        try:
+            config = json.loads(path.read_text(encoding="utf-8"))
+            save_agent_config(cwd, config)  # write as .md
+            path.unlink()  # remove old .json
+            configs.append(config)
         except (json.JSONDecodeError, OSError):
             pass
+
     return configs
 
 
 def save_agent_config(cwd: Path, config: dict) -> None:
-    """Write .hive/agents/<name>.json."""
+    """Write .hive/agents/<name>.md."""
     agents_dir = _hive_path(cwd) / "agents"
     agents_dir.mkdir(parents=True, exist_ok=True)
-    path = agents_dir / f"{config['name']}.json"
-    path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+    path = agents_dir / f"{config['name']}.md"
+    path.write_text(_dump_agent_md(config), encoding="utf-8")
 
 
 def delete_agent_config(cwd: Path, name: str) -> None:
-    """Remove .hive/agents/<name>.json if it exists."""
-    path = _hive_path(cwd) / "agents" / f"{name}.json"
-    if path.exists():
-        path.unlink()
+    """Remove .hive/agents/<name>.md (and legacy .json) if they exist."""
+    for ext in (".md", ".json"):
+        path = _hive_path(cwd) / "agents" / f"{name}{ext}"
+        if path.exists():
+            path.unlink()
 
 
 def save_output(session: Session, lines: list[str]) -> None:

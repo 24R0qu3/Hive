@@ -5,7 +5,11 @@ import pytest
 
 from hive.workspace import (
     DEFAULT_SUMMARIZATION_TOKEN_LIMIT,
+    _dump_agent_md,
+    _parse_agent_md,
     create_workspace,
+    delete_agent_config,
+    get_agent_configs,
     get_config,
     get_language,
     get_model,
@@ -18,6 +22,7 @@ from hive.workspace import (
     load_full_conversation,
     load_output,
     new_session,
+    save_agent_config,
     save_config,
     save_conversation,
     save_full_conversation,
@@ -576,3 +581,201 @@ def test_set_and_get_summarization_token_limit(tmp_path):
     create_workspace(tmp_path)
     set_summarization_token_limit(tmp_path, 3000)
     assert get_summarization_token_limit(tmp_path) == 3000
+
+
+# ---------------------------------------------------------------------------
+# _parse_agent_md / _dump_agent_md
+# ---------------------------------------------------------------------------
+
+_SAMPLE_MD = """\
+---
+name: test-agent
+description: A test agent
+tools:
+  - shell
+max_steps: 5
+stop_phrase: DONE
+---
+
+You are a test agent.
+Say DONE when finished.
+"""
+
+
+def test_parse_agent_md_name(tmp_path):
+    config = _parse_agent_md(_SAMPLE_MD)
+    assert config["name"] == "test-agent"
+
+
+def test_parse_agent_md_description(tmp_path):
+    config = _parse_agent_md(_SAMPLE_MD)
+    assert config["description"] == "A test agent"
+
+
+def test_parse_agent_md_tools(tmp_path):
+    config = _parse_agent_md(_SAMPLE_MD)
+    assert config["tools"] == ["shell"]
+
+
+def test_parse_agent_md_max_steps_is_int(tmp_path):
+    config = _parse_agent_md(_SAMPLE_MD)
+    assert config["max_steps"] == 5
+
+
+def test_parse_agent_md_stop_phrase(tmp_path):
+    config = _parse_agent_md(_SAMPLE_MD)
+    assert config["stop_phrase"] == "DONE"
+
+
+def test_parse_agent_md_system_prompt(tmp_path):
+    config = _parse_agent_md(_SAMPLE_MD)
+    assert "You are a test agent" in config["system_prompt"]
+
+
+def test_parse_agent_md_no_tools_is_none(tmp_path):
+    md = """\
+---
+name: x
+description: y
+tools:
+max_steps: 10
+stop_phrase: TASK_COMPLETE
+---
+
+prompt
+"""
+    config = _parse_agent_md(md)
+    assert config["tools"] is None
+
+
+def test_parse_agent_md_invalid_raises(tmp_path):
+    with pytest.raises(ValueError):
+        _parse_agent_md("no frontmatter here")
+
+
+def test_dump_agent_md_round_trip(tmp_path):
+    original = {
+        "name": "round-trip",
+        "description": "test",
+        "tools": ["shell"],
+        "max_steps": 7,
+        "stop_phrase": "DONE",
+        "system_prompt": "Be helpful.",
+    }
+    dumped = _dump_agent_md(original)
+    parsed = _parse_agent_md(dumped)
+    assert parsed["name"] == original["name"]
+    assert parsed["description"] == original["description"]
+    assert parsed["tools"] == original["tools"]
+    assert parsed["max_steps"] == original["max_steps"]
+    assert parsed["stop_phrase"] == original["stop_phrase"]
+    assert "Be helpful." in parsed["system_prompt"]
+
+
+def test_dump_agent_md_no_tools_round_trip(tmp_path):
+    config = {
+        "name": "no-tools",
+        "description": "x",
+        "tools": None,
+        "max_steps": 10,
+        "stop_phrase": "TASK_COMPLETE",
+        "system_prompt": "Do stuff.",
+    }
+    dumped = _dump_agent_md(config)
+    parsed = _parse_agent_md(dumped)
+    assert parsed["tools"] is None
+
+
+# ---------------------------------------------------------------------------
+# save_agent_config / get_agent_configs / delete_agent_config (.md format)
+# ---------------------------------------------------------------------------
+
+
+def test_save_agent_config_creates_md_file(tmp_path):
+    create_workspace(tmp_path)
+    save_agent_config(
+        tmp_path,
+        {
+            "name": "myagent",
+            "description": "x",
+            "tools": None,
+            "max_steps": 10,
+            "stop_phrase": "TASK_COMPLETE",
+            "system_prompt": "Do stuff.",
+        },
+    )
+    assert (tmp_path / ".hive" / "agents" / "myagent.md").exists()
+
+
+def test_save_agent_config_does_not_create_json(tmp_path):
+    create_workspace(tmp_path)
+    save_agent_config(
+        tmp_path,
+        {
+            "name": "myagent",
+            "description": "x",
+            "tools": None,
+            "max_steps": 10,
+            "stop_phrase": "TASK_COMPLETE",
+            "system_prompt": "Do stuff.",
+        },
+    )
+    assert not (tmp_path / ".hive" / "agents" / "myagent.json").exists()
+
+
+def test_get_agent_configs_reads_md(tmp_path):
+    create_workspace(tmp_path)
+    save_agent_config(
+        tmp_path,
+        {
+            "name": "a",
+            "description": "desc",
+            "tools": ["shell"],
+            "max_steps": 5,
+            "stop_phrase": "DONE",
+            "system_prompt": "prompt",
+        },
+    )
+    configs = get_agent_configs(tmp_path)
+    assert len(configs) == 1
+    assert configs[0]["name"] == "a"
+
+
+def test_get_agent_configs_empty_when_no_dir(tmp_path):
+    assert get_agent_configs(tmp_path) == []
+
+
+def test_delete_agent_config_removes_md(tmp_path):
+    create_workspace(tmp_path)
+    save_agent_config(
+        tmp_path,
+        {
+            "name": "del-me",
+            "description": "x",
+            "tools": None,
+            "max_steps": 10,
+            "stop_phrase": "TASK_COMPLETE",
+            "system_prompt": "x",
+        },
+    )
+    delete_agent_config(tmp_path, "del-me")
+    assert not (tmp_path / ".hive" / "agents" / "del-me.md").exists()
+
+
+def test_get_agent_configs_migrates_json(tmp_path):
+    create_workspace(tmp_path)
+    agents_dir = tmp_path / ".hive" / "agents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    agent_data = {
+        "name": "legacy",
+        "description": "old",
+        "tools": None,
+        "max_steps": 10,
+        "stop_phrase": "TASK_COMPLETE",
+        "system_prompt": "old prompt",
+    }
+    (agents_dir / "legacy.json").write_text(json.dumps(agent_data), encoding="utf-8")
+    configs = get_agent_configs(tmp_path)
+    assert any(c["name"] == "legacy" for c in configs)
+    assert not (agents_dir / "legacy.json").exists()
+    assert (agents_dir / "legacy.md").exists()

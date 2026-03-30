@@ -1524,7 +1524,7 @@ class HiveApp:
                 "Use '/agent list' to see available agents."
             )
             return
-        agent_path = self._cwd / ".hive" / "agents" / f"{name}.json"
+        agent_path = self._cwd / ".hive" / "agents" / f"{name}.md"
         if not agent_path.exists():
             self.print(f"[red]Agent file not found: {agent_path}[/red]")
             return
