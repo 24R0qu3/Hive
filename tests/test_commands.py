@@ -6,6 +6,7 @@ from hive.commands import (
     AI_TOOLS,
     COMMAND_NAMES,
     COMMAND_REGISTRY,
+    SUB_COMMANDS,
     SYSTEM_PROMPT,
     CommandDoc,
     _get_command_info,
@@ -90,6 +91,29 @@ def test_command_names_are_bare_slash_names():
 def test_command_names_match_registry():
     expected = [cmd.name for cmd in COMMAND_REGISTRY]
     assert COMMAND_NAMES == expected
+
+
+# ---------------------------------------------------------------------------
+# SUB_COMMANDS
+# ---------------------------------------------------------------------------
+
+
+def test_sub_commands_keys_exist_in_command_names():
+    for key in SUB_COMMANDS:
+        assert key in COMMAND_NAMES, f"{key} in SUB_COMMANDS is not in COMMAND_NAMES"
+
+
+def test_sub_commands_values_are_non_empty_lists():
+    for key, subs in SUB_COMMANDS.items():
+        assert isinstance(subs, list) and len(subs) > 0, f"{key} has empty sub-commands"
+
+
+def test_sub_commands_agent_has_expected_subs():
+    assert set(SUB_COMMANDS["/agent"]) >= {"add", "list", "delete", "edit"}
+
+
+def test_sub_commands_mcp_has_manage():
+    assert "manage" in SUB_COMMANDS["/mcp"]
 
 
 # ---------------------------------------------------------------------------

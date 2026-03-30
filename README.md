@@ -86,6 +86,8 @@ Type a command in the input field and press `Enter`:
 | `/agent edit <name>` | Open a user-defined agent's JSON in your editor |
 | `/exit` | Exit Hive |
 
+As you type, a suggestion bar appears below the input showing matching commands. Use `Tab` or `↑`/`↓` to select, `Enter` to accept. Sub-commands are suggested automatically once you complete a command — e.g. typing `/agent ` shows `add`, `list`, `delete`, `edit`. Both the command and its sub-command are highlighted in the input field.
+
 **Keyboard shortcuts in the input field:**
 
 | Key | Action |

@@ -295,3 +295,89 @@ def test_print_renders_rich_table(hive_app):
     hive_app.print(t)
     output = "\n".join(hive_app._output_lines)
     assert "Alice" in output
+
+
+# ---------------------------------------------------------------------------
+# Sub-command suggestion (_update_suggestion via buffer.on_text_changed)
+# ---------------------------------------------------------------------------
+
+
+def test_suggestion_top_level_command(hive_app):
+    hive_app.input_field.text = "/age"
+    suggestion = hive_app.input_field.buffer.suggestion
+    assert suggestion is not None
+    assert suggestion.text == "nt"  # "/age" → "/agent"
+
+
+def test_suggestion_sub_command(hive_app):
+    hive_app.input_field.text = "/agent ad"
+    suggestion = hive_app.input_field.buffer.suggestion
+    assert suggestion is not None
+    assert suggestion.text == "d"  # "/agent ad" → "/agent add"
+
+
+def test_suggestion_sub_command_empty_prefix(hive_app):
+    # "/agent " with trailing space — first sub-command should be suggested
+    hive_app.input_field.text = "/agent a"
+    suggestion = hive_app.input_field.buffer.suggestion
+    assert suggestion is not None  # "add" starts with "a"
+
+
+def test_suggestion_clears_on_non_slash(hive_app):
+    hive_app.input_field.text = "hello"
+    assert hive_app.input_field.buffer.suggestion is None
+
+
+def test_suggestion_none_on_complete_command_without_subs(hive_app):
+    # "/exit" is complete — no sub-commands, no further suggestion
+    hive_app.input_field.text = "/exit"
+    suggestion = hive_app.input_field.buffer.suggestion
+    # No extension possible
+    assert suggestion is None
+
+
+# ---------------------------------------------------------------------------
+# _SlashLexer — sub-command highlighting
+# ---------------------------------------------------------------------------
+
+
+def test_slash_lexer_highlights_command():
+    from prompt_toolkit.document import Document
+
+    from hive.ui.app import _SlashLexer
+
+    lexer = _SlashLexer()
+    doc = Document("/agent add")
+    get_line = lexer.lex_document(doc)
+    fragments = get_line(0)
+    styles = [f[0] for f in fragments if f[1].strip()]
+    assert "class:slash-cmd" in styles
+
+
+def test_slash_lexer_highlights_subcommand():
+    from prompt_toolkit.document import Document
+
+    from hive.ui.app import _SlashLexer
+
+    lexer = _SlashLexer()
+    doc = Document("/agent add")
+    get_line = lexer.lex_document(doc)
+    fragments = get_line(0)
+    # find fragment with "add"
+    sub_fragments = [f for f in fragments if f[1] == "add"]
+    assert sub_fragments, "no fragment for 'add'"
+    assert sub_fragments[0][0] == "class:slash-sub"
+
+
+def test_slash_lexer_no_subcommand_highlight_for_unknown():
+    from prompt_toolkit.document import Document
+
+    from hive.ui.app import _SlashLexer
+
+    lexer = _SlashLexer()
+    doc = Document("/agent unknownsub")
+    get_line = lexer.lex_document(doc)
+    fragments = get_line(0)
+    sub_fragments = [f for f in fragments if f[1] == "unknownsub"]
+    assert sub_fragments
+    assert sub_fragments[0][0] == ""  # not highlighted
