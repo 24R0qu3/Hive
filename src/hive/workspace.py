@@ -4,7 +4,14 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from platformdirs import user_config_dir
+
 _HIVE_DIR = ".hive"
+
+
+def get_global_agents_dir() -> Path:
+    """Return the platform-appropriate global agents directory (~/.config/hive/agents/)."""
+    return Path(user_config_dir("hive", appauthor=False)) / "agents"
 
 
 @dataclass
@@ -339,6 +346,35 @@ def delete_agent_config(cwd: Path, name: str) -> None:
         path = _hive_path(cwd) / "agents" / f"{name}{ext}"
         if path.exists():
             path.unlink()
+
+
+def get_global_agent_configs() -> list[dict]:
+    """Read all global agents from the user config agents directory."""
+    agents_dir = get_global_agents_dir()
+    if not agents_dir.is_dir():
+        return []
+    configs = []
+    for path in sorted(agents_dir.glob("*.md")):
+        try:
+            configs.append(_parse_agent_md(path.read_text(encoding="utf-8")))
+        except (ValueError, OSError):
+            pass
+    return configs
+
+
+def save_global_agent_config(config: dict) -> None:
+    """Write a global agent to the user config agents directory."""
+    agents_dir = get_global_agents_dir()
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    path = agents_dir / f"{config['name']}.md"
+    path.write_text(_dump_agent_md(config), encoding="utf-8")
+
+
+def delete_global_agent_config(name: str) -> None:
+    """Remove a global agent file if it exists."""
+    path = get_global_agents_dir() / f"{name}.md"
+    if path.exists():
+        path.unlink()
 
 
 def save_output(session: Session, lines: list[str]) -> None:

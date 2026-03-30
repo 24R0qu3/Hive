@@ -17,6 +17,7 @@ class AgentDefinition:
     tools: list[str] | None = None  # None = all tools; list = whitelist by name
     max_steps: int = 10
     stop_phrase: str = "TASK_COMPLETE"
+    scope: str = "local"  # "local" | "global" | "builtin" — not persisted
 
     def to_dict(self) -> dict:
         return {
@@ -29,7 +30,7 @@ class AgentDefinition:
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> "AgentDefinition":
+    def from_dict(cls, d: dict, scope: str = "local") -> "AgentDefinition":
         return cls(
             name=d["name"],
             description=d["description"],
@@ -37,6 +38,7 @@ class AgentDefinition:
             tools=d.get("tools"),
             max_steps=int(d.get("max_steps", 10)),
             stop_phrase=d.get("stop_phrase", "TASK_COMPLETE"),
+            scope=scope,
         )
 
 
@@ -156,15 +158,25 @@ class AgentRunner:
 
 
 def load_agent_definitions(cwd: Path) -> dict[str, AgentDefinition]:
-    """Return all agents: built-ins merged with user-defined (user overrides by name)."""
+    """Return all agents: built-ins < global < local (later overrides by name)."""
     from hive.agents import BUILTIN_AGENTS
-    from hive.workspace import get_agent_configs
+    from hive.workspace import get_agent_configs, get_global_agent_configs
 
-    definitions: dict[str, AgentDefinition] = {a.name: a for a in BUILTIN_AGENTS}
+    definitions: dict[str, AgentDefinition] = {
+        a.name: AgentDefinition.from_dict(a.to_dict(), scope="builtin")
+        for a in BUILTIN_AGENTS
+    }
+
+    for config in get_global_agent_configs():
+        try:
+            defn = AgentDefinition.from_dict(config, scope="global")
+            definitions[defn.name] = defn
+        except (KeyError, ValueError, TypeError):
+            pass
 
     for config in get_agent_configs(cwd):
         try:
-            defn = AgentDefinition.from_dict(config)
+            defn = AgentDefinition.from_dict(config, scope="local")
             definitions[defn.name] = defn
         except (KeyError, ValueError, TypeError):
             pass

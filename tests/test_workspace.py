@@ -779,3 +779,68 @@ def test_get_agent_configs_migrates_json(tmp_path):
     assert any(c["name"] == "legacy" for c in configs)
     assert not (agents_dir / "legacy.json").exists()
     assert (agents_dir / "legacy.md").exists()
+
+
+# ---------------------------------------------------------------------------
+# Global agent CRUD
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def global_agents_dir(tmp_path, monkeypatch):
+    """Redirect global agent storage to a temp directory."""
+    import hive.workspace as ws_mod
+
+    global_dir = tmp_path / "global-agents"
+    monkeypatch.setattr(ws_mod, "get_global_agents_dir", lambda: global_dir)
+    return global_dir
+
+
+def test_save_global_agent_config_creates_md(global_agents_dir):
+    from hive.workspace import save_global_agent_config
+
+    save_global_agent_config(
+        {
+            "name": "g-agent",
+            "description": "x",
+            "tools": None,
+            "max_steps": 10,
+            "stop_phrase": "TASK_COMPLETE",
+            "system_prompt": "hi",
+        }
+    )
+    assert (global_agents_dir / "g-agent.md").exists()
+
+
+def test_get_global_agent_configs_reads_md(global_agents_dir):
+    from hive.workspace import get_global_agent_configs, save_global_agent_config
+
+    save_global_agent_config(
+        {
+            "name": "g2",
+            "description": "x",
+            "tools": None,
+            "max_steps": 10,
+            "stop_phrase": "TASK_COMPLETE",
+            "system_prompt": "hi",
+        }
+    )
+    configs = get_global_agent_configs()
+    assert any(c["name"] == "g2" for c in configs)
+
+
+def test_delete_global_agent_config(global_agents_dir):
+    from hive.workspace import delete_global_agent_config, save_global_agent_config
+
+    save_global_agent_config(
+        {
+            "name": "del-global",
+            "description": "x",
+            "tools": None,
+            "max_steps": 10,
+            "stop_phrase": "TASK_COMPLETE",
+            "system_prompt": "hi",
+        }
+    )
+    delete_global_agent_config("del-global")
+    assert not (global_agents_dir / "del-global.md").exists()

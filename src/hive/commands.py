@@ -67,13 +67,14 @@ COMMAND_REGISTRY: list[CommandDoc] = [
     ),
     CommandDoc(
         name="/agent",
-        usage="/agent <name> <goal>  |  /agent list  |  /agent add  |  /agent delete <name>  |  /agent edit <name>",
+        usage="/agent <name> <goal>  |  /agent list  |  /agent add  |  /agent delete <name>  |  /agent edit <name>  |  /agent copy <name> local|global",
         description=(
             "Run a named agent on a goal. "
             "Use '/agent list' to see available agents, "
             "'/agent add' to define a new one, "
             "'/agent delete' to remove one, "
-            "'/agent edit' to open its Markdown file in your editor."
+            "'/agent edit' to open its Markdown file in your editor, "
+            "'/agent copy' to copy an agent between local and global scope."
         ),
         notes=(
             "Agents run autonomously using tools until the goal is complete "
@@ -87,7 +88,7 @@ COMMAND_NAMES: list[str] = [cmd.name for cmd in COMMAND_REGISTRY]
 
 # Sub-commands for commands that accept a second token.
 SUB_COMMANDS: dict[str, list[str]] = {
-    "/agent": ["add", "list", "delete", "edit"],
+    "/agent": ["add", "list", "delete", "edit", "copy"],
     "/mcp": ["manage"],
 }
 
