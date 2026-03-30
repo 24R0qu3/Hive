@@ -163,6 +163,7 @@ class HiveApp:
         session: Session | None = None,
         trusted: bool = False,
         _output=None,  # for testing: pass a DummyOutput to avoid terminal detection
+        provider: str | None = None,  # "ollama" | "anthropic" | None = auto-detect
     ):
         self._cwd = cwd
 
@@ -219,8 +220,21 @@ class HiveApp:
         self._hint_idx: int = 0
 
         # --- AI state ---
-        self._provider: ai.AIProvider = ai.OllamaProvider()
-        self._model: str = get_model(cwd) or ai.DEFAULT_MODEL
+        import os
+
+        _use_anthropic = provider == "anthropic" or (
+            provider is None and bool(os.environ.get("ANTHROPIC_API_KEY"))
+        )
+        if _use_anthropic:
+            try:
+                self._provider: ai.AIProvider = ai.AnthropicProvider()
+                self._model: str = get_model(cwd) or ai.DEFAULT_ANTHROPIC_MODEL
+            except RuntimeError:
+                self._provider = ai.OllamaProvider()
+                self._model = get_model(cwd) or ai.DEFAULT_MODEL
+        else:
+            self._provider = ai.OllamaProvider()
+            self._model = get_model(cwd) or ai.DEFAULT_MODEL
         _sum_limit = (
             get_summarization_token_limit(cwd)
             if (trusted or session is not None)
@@ -1804,12 +1818,12 @@ class HiveApp:
         # Small delay so the welcome panel is visible before warnings appear.
         _time.sleep(1.0)
 
-        if not self._provider.is_reachable():
-            self.print(
-                t("startup.ollama_unreachable", self._lang).format(
-                    url=self._provider.base_url
-                )
-            )
+        if (
+            hasattr(self._provider, "is_reachable")
+            and not self._provider.is_reachable()
+        ):
+            url = getattr(self._provider, "base_url", "remote API")
+            self.print(t("startup.ollama_unreachable", self._lang).format(url=url))
 
         # One-time gitscribe warning when ANTHROPIC_API_KEY is missing.
         if "gitscribe_api_key" not in get_warned_flags() and not os.environ.get(

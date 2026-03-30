@@ -323,3 +323,212 @@ def test_is_reachable_returns_false_on_timeout():
     provider = OllamaProvider()
     with patch("urllib.request.urlopen", side_effect=socket.timeout()):
         assert provider.is_reachable() is False
+
+
+# ---------------------------------------------------------------------------
+# _openai_messages_to_anthropic
+# ---------------------------------------------------------------------------
+
+from hive.ai import (  # noqa: E402
+    _openai_messages_to_anthropic,
+    _openai_tools_to_anthropic,
+)
+
+
+def test_system_message_extracted():
+    msgs = [
+        {"role": "system", "content": "Be helpful."},
+        {"role": "user", "content": "Hello"},
+    ]
+    system, anth = _openai_messages_to_anthropic(msgs)
+    assert system == "Be helpful."
+    assert anth[0]["role"] == "user"
+
+
+def test_user_message_passthrough():
+    msgs = [{"role": "user", "content": "Hi"}]
+    _, anth = _openai_messages_to_anthropic(msgs)
+    assert anth[0] == {"role": "user", "content": "Hi"}
+
+
+def test_assistant_text_message():
+    msgs = [{"role": "assistant", "content": "Sure!"}]
+    _, anth = _openai_messages_to_anthropic(msgs)
+    assert anth[0]["role"] == "assistant"
+    assert anth[0]["content"][0] == {"type": "text", "text": "Sure!"}
+
+
+def test_tool_call_converted_to_tool_use():
+    msgs = [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {"function": {"name": "shell", "arguments": {"command": "ls"}}}
+            ],
+        }
+    ]
+    _, anth = _openai_messages_to_anthropic(msgs)
+    block = anth[0]["content"][0]
+    assert block["type"] == "tool_use"
+    assert block["name"] == "shell"
+    assert block["input"] == {"command": "ls"}
+
+
+def test_tool_result_becomes_user_message():
+    msgs = [
+        {
+            "role": "assistant",
+            "tool_calls": [
+                {"id": "tid1", "function": {"name": "shell", "arguments": {}}}
+            ],
+        },
+        {"role": "tool", "content": "file.txt"},
+    ]
+    _, anth = _openai_messages_to_anthropic(msgs)
+    user_msg = anth[1]
+    assert user_msg["role"] == "user"
+    assert user_msg["content"][0]["type"] == "tool_result"
+    assert user_msg["content"][0]["tool_use_id"] == "tid1"
+    assert user_msg["content"][0]["content"] == "file.txt"
+
+
+def test_openai_tools_to_anthropic():
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "shell",
+                "description": "Run a command",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"command": {"type": "string"}},
+                },
+            },
+        }
+    ]
+    anth = _openai_tools_to_anthropic(tools)
+    assert anth[0]["name"] == "shell"
+    assert anth[0]["description"] == "Run a command"
+    assert "input_schema" in anth[0]
+
+
+# ---------------------------------------------------------------------------
+# AnthropicProvider
+# ---------------------------------------------------------------------------
+
+from hive.ai import AnthropicProvider  # noqa: E402
+
+
+def test_anthropic_provider_requires_api_key():
+    with patch.dict("os.environ", {}, clear=True):
+        import os
+
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+        with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
+            AnthropicProvider()
+
+
+def test_anthropic_provider_satisfies_protocol(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    with patch("anthropic.Anthropic"):
+        provider = AnthropicProvider()
+    assert isinstance(provider, AIProvider)
+
+
+def test_anthropic_provider_is_reachable(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    with patch("anthropic.Anthropic"):
+        provider = AnthropicProvider()
+    assert provider.is_reachable() is True
+
+
+def test_anthropic_provider_list_models(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    with patch("anthropic.Anthropic"):
+        provider = AnthropicProvider()
+    models = provider.list_models()
+    assert isinstance(models, list)
+    assert len(models) > 0
+    assert all(isinstance(m, str) for m in models)
+
+
+def _make_anthropic_response(text: str = "", tool_calls: list | None = None):
+    """Build a mock Anthropic messages.create response."""
+    blocks = []
+    if text:
+        block = MagicMock()
+        block.type = "text"
+        block.text = text
+        blocks.append(block)
+    for tc in tool_calls or []:
+        block = MagicMock()
+        block.type = "tool_use"
+        block.id = tc["id"]
+        block.name = tc["name"]
+        block.input = tc["input"]
+        blocks.append(block)
+    response = MagicMock()
+    response.content = blocks
+    return response
+
+
+def test_anthropic_chat_returns_text(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    with patch("anthropic.Anthropic"):
+        provider = AnthropicProvider()
+        provider._client.messages.create.return_value = _make_anthropic_response(
+            "Hello!"
+        )
+        result, fallback = provider.chat(
+            [{"role": "user", "content": "hi"}], "claude-sonnet-4-6"
+        )
+    assert result == "Hello!"
+    assert fallback is False
+
+
+def test_anthropic_chat_step_returns_tool_calls(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    with patch("anthropic.Anthropic"):
+        provider = AnthropicProvider()
+        provider._client.messages.create.return_value = _make_anthropic_response(
+            tool_calls=[{"id": "t1", "name": "shell", "input": {"command": "ls"}}]
+        )
+        text, tool_calls = provider.chat_step(
+            [{"role": "user", "content": "run ls"}], "claude-sonnet-4-6"
+        )
+    assert text == ""
+    assert len(tool_calls) == 1
+    assert tool_calls[0]["function"]["name"] == "shell"
+    assert tool_calls[0]["function"]["arguments"] == {"command": "ls"}
+
+
+def test_anthropic_chat_executes_tool_loop(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    call_count = [0]
+    with patch("anthropic.Anthropic"):
+        provider = AnthropicProvider()
+
+        def side_effect(**kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return _make_anthropic_response(
+                    tool_calls=[
+                        {"id": "t1", "name": "shell", "input": {"command": "ls"}}
+                    ]
+                )
+            return _make_anthropic_response("Done!")
+
+        provider._client.messages.create.side_effect = side_effect
+        result, _ = provider.chat(
+            [{"role": "user", "content": "run ls"}],
+            "claude-sonnet-4-6",
+            tools=[
+                {
+                    "type": "function",
+                    "function": {"name": "shell", "description": "x", "parameters": {}},
+                }
+            ],
+            tool_executor=lambda n, a: "file.txt",
+        )
+    assert result == "Done!"
+    assert call_count[0] == 2

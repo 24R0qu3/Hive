@@ -24,6 +24,12 @@ def run():
     parser.add_argument(
         "--list-sessions", action="store_true", help="Print sessions and exit"
     )
+    parser.add_argument(
+        "--provider",
+        default=None,
+        choices=["ollama", "anthropic"],
+        help="AI provider to use (default: auto-detect from ANTHROPIC_API_KEY)",
+    )
     args = parser.parse_args()
 
     cwd = Path.cwd()
@@ -61,7 +67,7 @@ def run():
 
     from hive.ui.app import HiveApp
 
-    HiveApp(cwd=cwd, session=session, trusted=trusted).run()
+    HiveApp(cwd=cwd, session=session, trusted=trusted, provider=args.provider).run()
 
 
 def _cmd_list_sessions(cwd: Path) -> None:
