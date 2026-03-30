@@ -28,7 +28,7 @@ where = ["src"]
 version = {attr = "hive.__version__"}
 
 [tool.bumpversion]
-current_version = "0.3.3"
+current_version = "0.3.4"
 commit = true
 tag = true
 tag_name = "v{new_version}"
