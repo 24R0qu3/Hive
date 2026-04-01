@@ -1706,6 +1706,16 @@ class HiveApp:
         self._ai_thinking = True
 
         width = self._current_width()
+
+        # Auto-activate any MCP servers required by the agent's tool whitelist.
+        # Derives server names from prefixed tool names (e.g. "gitmcp__stage_all" → "gitmcp").
+        if defn.tools:
+            required_servers = {t.split("__")[0] for t in defn.tools if "__" in t}
+            auto_activated = required_servers - self._active_mcp_servers
+            self._active_mcp_servers |= auto_activated
+        else:
+            auto_activated = set()
+
         mcp_tools = [
             tool
             for tool in self._mcp.list_tools()
@@ -1783,6 +1793,10 @@ class HiveApp:
 
             self._ai_thinking = False
             self._agent_abort = None
+
+            # Deactivate servers that were auto-activated for this agent run.
+            if auto_activated:
+                self._active_mcp_servers -= auto_activated
 
             if self.app.is_running:
                 self.app.invalidate()

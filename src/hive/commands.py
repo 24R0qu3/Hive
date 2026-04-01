@@ -125,7 +125,10 @@ SYSTEM_PROMPT = (
     "- When asked what commands are available, list only the commands above.\n"
     "- MCP servers are listed in the context when connected. Their full tool schemas are only "
     "included when the user activates them with /use <name>. If a user asks to do something "
-    "that requires an MCP tool and no schemas are active, tell them to run /use <server-name> first."
+    "that requires an MCP tool and no schemas are active, tell them to run /use <server-name> first.\n"
+    "- MCP tools are NEVER CLI commands. They are callable only via the tool-call mechanism "
+    "(names follow the pattern servername__toolname, e.g. gitmcp__stage_all). "
+    "Never suggest running an MCP tool name as a bash or shell command."
 )
 
 # ---------------------------------------------------------------------------

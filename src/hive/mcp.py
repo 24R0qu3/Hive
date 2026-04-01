@@ -219,7 +219,7 @@ class MCPManager:
             return None
         lines = ["MCP servers available (/use <name> activates full schemas):"]
         for server_name, conn in snapshot.items():
-            names = [tool.name for tool in conn.tools]
+            names = [f"{server_name}__{tool.name}" for tool in conn.tools]
             preview = ", ".join(names[:10])
             if len(names) > 10:
                 preview += f" (+{len(names) - 10} more)"
