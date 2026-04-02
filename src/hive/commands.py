@@ -251,8 +251,9 @@ AI_TOOLS: list[dict] = [
             "name": "shell",
             "description": (
                 "Run a shell command in the current working directory and return its output. "
-                "Use this to inspect files, list directories, check environment variables, "
-                "or gather any information that requires running a command."
+                "Use this for ANY request that requires real data: git status, file contents, "
+                "directory listings, environment variables, running scripts, etc. "
+                "Always call this tool instead of describing or suggesting a command."
             ),
             "parameters": {
                 "type": "object",
