@@ -18,12 +18,13 @@ def _extract_text_tool_calls(text: str) -> list[dict]:
     """
     calls = []
     for m in re.finditer(
-        r'\{[^{}]*"name"\s*:\s*"([^"]+)"[^{}]*"arguments"\s*:\s*(\{[^}]*\})',
+        r'\{[^{}]*"name"\s*:\s*"([^"]+)"[^{}]*"arguments"\s*:\s*(null|\{[^}]*\})',
         text,
         re.DOTALL,
     ):
         try:
-            args = json.loads(m.group(2))
+            raw = m.group(2)
+            args = {} if raw == "null" else json.loads(raw)
             calls.append({"function": {"name": m.group(1), "arguments": args}})
         except json.JSONDecodeError:
             continue

@@ -154,6 +154,14 @@ def test_extract_text_tool_calls_ignores_invalid_json():
     assert _extract_text_tool_calls(text) == []
 
 
+def test_extract_text_tool_calls_null_arguments():
+    text = '{"name": "gitmcp__get_status", "arguments": null}'
+    calls = _extract_text_tool_calls(text)
+    assert len(calls) == 1
+    assert calls[0]["function"]["name"] == "gitmcp__get_status"
+    assert calls[0]["function"]["arguments"] == {}
+
+
 def test_extract_text_tool_calls_ignores_object_missing_arguments():
     text = '{"name": "shell", "other": "field"}'
     assert _extract_text_tool_calls(text) == []
