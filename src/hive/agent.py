@@ -17,7 +17,11 @@ def _extract_text_tool_calls(text: str) -> list[dict]:
     in the text.  Returns a list in the same format as Ollama's ``tool_calls``.
     """
     calls = []
-    for m in re.finditer(r'\{[^{}]*"name"\s*:\s*"([^"]+)"[^{}]*"arguments"\s*:\s*(\{[^}]*\})', text, re.DOTALL):
+    for m in re.finditer(
+        r'\{[^{}]*"name"\s*:\s*"([^"]+)"[^{}]*"arguments"\s*:\s*(\{[^}]*\})',
+        text,
+        re.DOTALL,
+    ):
         try:
             args = json.loads(m.group(2))
             calls.append({"function": {"name": m.group(1), "arguments": args}})
@@ -120,6 +124,17 @@ class AgentRunner:
                     messages, self._model, filtered_tools, abort_event
                 )
             except Exception as exc:
+                from hive.ai import _ToolsNotSupported
+
+                if isinstance(exc, _ToolsNotSupported):
+                    return AgentResult(
+                        success=False,
+                        summary=(
+                            f"Model '{self._model}' does not support tool calling. "
+                            "Switch to a model with tool-call support (e.g. qwen2.5-coder, qwen3)."
+                        ),
+                        steps_taken=step_num,
+                    )
                 return AgentResult(
                     success=False,
                     summary=f"Error: {exc}",

@@ -226,12 +226,16 @@ class OllamaProvider:
         """Make exactly ONE model call and return ``(text, tool_calls)``.
 
         Does NOT execute tools and does NOT loop.  If the model rejects the
-        tools payload, the call is retried without tools and an empty list is
-        returned for *tool_calls*.  Raises ``_Aborted`` if *abort* is set.
+        tools payload and *tools* were provided, ``_ToolsNotSupported`` is
+        re-raised so the caller can surface a meaningful error.  If no tools
+        were requested the call is retried without tools transparently.
+        Raises ``_Aborted`` if *abort* is set.
         """
         try:
             return self._chat_step_raw(messages, model, tools, abort)
         except _ToolsNotSupported:
+            if tools:
+                raise
             text, _ = self._chat_step_raw(messages, model, None, abort)
             return text, []
 

@@ -268,6 +268,24 @@ def test_agent_runner_returns_error_on_provider_exception():
     assert "boom" in result.summary
 
 
+def test_agent_runner_returns_friendly_error_on_tools_not_supported():
+    from hive.ai import _ToolsNotSupported
+
+    provider = _make_provider([_ToolsNotSupported()])
+    runner = AgentRunner(provider, "phi4-mini:3.8b")
+    result = runner.run(
+        _make_definition(),
+        "go",
+        lambda n, a: "ok",
+        lambda s: None,
+        [{"type": "function", "function": {"name": "shell"}}],
+        threading.Event(),
+    )
+    assert result.success is False
+    assert "does not support tool calling" in result.summary
+    assert "phi4-mini:3.8b" in result.summary
+
+
 # ---------------------------------------------------------------------------
 # AgentRunner — abort
 # ---------------------------------------------------------------------------

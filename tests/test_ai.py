@@ -537,6 +537,63 @@ def test_anthropic_chat_executes_tool_loop(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# OllamaProvider.chat_step — tools-not-supported behaviour
+
+
+def test_chat_step_raises_tools_not_supported_when_tools_passed():
+    """chat_step re-raises _ToolsNotSupported when tools were requested."""
+    import io
+    import urllib.error
+
+    from hive.ai import _ToolsNotSupported
+
+    provider = OllamaProvider()
+    http_err = urllib.error.HTTPError(
+        url="http://localhost:11434/api/chat",
+        code=400,
+        msg="Bad Request",
+        hdrs=None,
+        fp=io.BytesIO(b'{"error":"model does not support tools"}'),
+    )
+    tools = [{"type": "function", "function": {"name": "shell", "parameters": {}}}]
+
+    with patch("urllib.request.urlopen", side_effect=http_err):
+        with pytest.raises(_ToolsNotSupported):
+            provider.chat_step([], "phi4-mini:3.8b", tools=tools)
+
+
+def test_chat_step_falls_back_silently_when_no_tools():
+    """chat_step falls back transparently when no tools were requested."""
+    import io
+    import urllib.error
+
+    from hive.ai import _ToolsNotSupported
+
+    provider = OllamaProvider()
+    http_err = urllib.error.HTTPError(
+        url="http://localhost:11434/api/chat",
+        code=400,
+        msg="Bad Request",
+        hdrs=None,
+        fp=io.BytesIO(b'{"error":"model does not support tools"}'),
+    )
+    call_count = [0]
+
+    def fake_urlopen(req, timeout=None):
+        call_count[0] += 1
+        body = json.loads(req.data)
+        if body.get("tools"):
+            raise http_err
+        return _fake_response("ok")
+
+    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        text, tool_calls = provider.chat_step([], "phi4-mini:3.8b", tools=None)
+
+    assert text == "ok"
+    assert tool_calls == []
+
+
+# ---------------------------------------------------------------------------
 # OllamaProvider.chat_step — abort support
 # ---------------------------------------------------------------------------
 
