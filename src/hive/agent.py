@@ -3,10 +3,27 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
+
+
+def _extract_text_tool_calls(text: str) -> list[dict]:
+    """Parse tool calls that a model emitted as raw JSON text instead of structured calls.
+
+    Matches objects of the form ``{"name": "...", "arguments": {...}}`` anywhere
+    in the text.  Returns a list in the same format as Ollama's ``tool_calls``.
+    """
+    calls = []
+    for m in re.finditer(r'\{[^{}]*"name"\s*:\s*"([^"]+)"[^{}]*"arguments"\s*:\s*(\{[^}]*\})', text, re.DOTALL):
+        try:
+            args = json.loads(m.group(2))
+            calls.append({"function": {"name": m.group(1), "arguments": args}})
+        except json.JSONDecodeError:
+            continue
+    return calls
 
 
 @dataclass
@@ -88,6 +105,7 @@ class AgentRunner:
             {"role": "system", "content": definition.system_prompt},
             {"role": "user", "content": goal},
         ]
+        text_mode: bool | None = None  # None = not yet determined
 
         for step_num in range(1, definition.max_steps + 1):
             if abort_event.is_set():
@@ -99,7 +117,7 @@ class AgentRunner:
 
             try:
                 text, tool_calls = self._provider.chat_step(
-                    messages, self._model, filtered_tools
+                    messages, self._model, filtered_tools, abort_event
                 )
             except Exception as exc:
                 return AgentResult(
@@ -107,6 +125,18 @@ class AgentRunner:
                     summary=f"Error: {exc}",
                     steps_taken=step_num,
                 )
+
+            # Fallback: some models emit tool calls as raw JSON text instead of
+            # using the structured tool_calls field.  Parse them out if present.
+            # text_mode is locked after the first tool call to keep history consistent.
+            if not tool_calls and text:
+                parsed = _extract_text_tool_calls(text)
+                if parsed:
+                    tool_calls = parsed
+                    if text_mode is None:
+                        text_mode = True
+            elif tool_calls and text_mode is None:
+                text_mode = False
 
             # Stop if the model signals completion or returns no tool calls
             if definition.stop_phrase in text or not tool_calls:
@@ -118,11 +148,18 @@ class AgentRunner:
                 )
 
             # Show any intermediate thinking text the model returned
-            if text:
+            if text and not text_mode:  # text_mode=None treated as False here
                 on_step(AgentStep(step_num=step_num, text=text))
 
-            # Execute each tool call
-            messages.append({"role": "assistant", "tool_calls": tool_calls})
+            # Execute each tool call and append results to the conversation.
+            # text_mode: model doesn't support structured tool_calls in history —
+            # use plain user messages so it can follow the conversation.
+            if text_mode:
+                messages.append({"role": "assistant", "content": text})
+            else:
+                messages.append({"role": "assistant", "tool_calls": tool_calls})
+
+            tool_results: list[str] = []
             for call in tool_calls:
                 if abort_event.is_set():
                     return AgentResult(
@@ -148,7 +185,13 @@ class AgentRunner:
                         tool_result=result,
                     )
                 )
-                messages.append({"role": "tool", "content": result})
+                if text_mode:
+                    tool_results.append(f"Result of {name}: {result}")
+                else:
+                    messages.append({"role": "tool", "content": result})
+
+            if text_mode:
+                messages.append({"role": "user", "content": "\n".join(tool_results)})
 
         return AgentResult(
             success=False,

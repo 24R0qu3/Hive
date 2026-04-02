@@ -1,6 +1,8 @@
 """Tests for hive.ai — provider interface and Ollama implementation."""
 
 import json
+import threading
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -532,3 +534,119 @@ def test_anthropic_chat_executes_tool_loop(monkeypatch):
         )
     assert result == "Done!"
     assert call_count[0] == 2
+
+
+# ---------------------------------------------------------------------------
+# OllamaProvider.chat_step — abort support
+# ---------------------------------------------------------------------------
+
+
+def test_ollama_chat_step_returns_text_and_empty_tool_calls():
+    provider = OllamaProvider()
+    with patch("urllib.request.urlopen", return_value=_fake_response("hi")):
+        text, tool_calls = provider.chat_step(
+            [{"role": "user", "content": "hello"}], "llama3.2"
+        )
+    assert text == "hi"
+    assert tool_calls == []
+
+
+def test_ollama_chat_step_returns_tool_calls():
+    provider = OllamaProvider()
+    with patch(
+        "urllib.request.urlopen",
+        return_value=_fake_tool_call_response("shell", {"command": "ls"}),
+    ):
+        text, tool_calls = provider.chat_step([], "llama3.2")
+    assert len(tool_calls) == 1
+    assert tool_calls[0]["function"]["name"] == "shell"
+
+
+def test_ollama_chat_step_abort_pre_set_raises():
+    """If abort is already set before the call, _Aborted should be raised."""
+    from hive.ai import _Aborted
+
+    provider = OllamaProvider()
+    abort = threading.Event()
+    abort.set()
+
+    def slow_urlopen(req, timeout=None):
+        time.sleep(10)  # should never be reached in meaningful time
+
+    with patch("urllib.request.urlopen", side_effect=slow_urlopen):
+        with pytest.raises(_Aborted):
+            provider.chat_step([], "llama3.2", abort=abort)
+
+
+def test_ollama_chat_step_abort_during_wait_raises():
+    """Abort set while the HTTP request is in flight should raise _Aborted."""
+    from hive.ai import _Aborted
+
+    provider = OllamaProvider()
+    abort = threading.Event()
+
+    def slow_urlopen(req, timeout=None):
+        time.sleep(2)
+        return _fake_response("too late")
+
+    # Set abort shortly after chat_step starts polling
+    def _set_abort():
+        time.sleep(0.1)
+        abort.set()
+
+    threading.Thread(target=_set_abort, daemon=True).start()
+
+    with patch("urllib.request.urlopen", side_effect=slow_urlopen):
+        with pytest.raises(_Aborted):
+            provider.chat_step([], "llama3.2", abort=abort)
+
+
+# ---------------------------------------------------------------------------
+# AnthropicProvider.chat_step — abort support
+# ---------------------------------------------------------------------------
+
+
+def test_anthropic_chat_step_abort_pre_set_raises(monkeypatch):
+    """Abort set before the call should raise _Aborted immediately."""
+    from hive.ai import _Aborted
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    abort = threading.Event()
+    abort.set()
+
+    with patch("anthropic.Anthropic"):
+        provider = AnthropicProvider()
+
+        def slow_create(**kwargs):
+            time.sleep(10)
+
+        provider._client.messages.create.side_effect = slow_create
+
+        with pytest.raises(_Aborted):
+            provider.chat_step([], "claude-sonnet-4-6", abort=abort)
+
+
+def test_anthropic_chat_step_abort_during_wait_raises(monkeypatch):
+    """Abort set while the API call is in flight should raise _Aborted."""
+    from hive.ai import _Aborted
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    abort = threading.Event()
+
+    with patch("anthropic.Anthropic"):
+        provider = AnthropicProvider()
+
+        def slow_create(**kwargs):
+            time.sleep(2)
+            return _make_anthropic_response("too late")
+
+        provider._client.messages.create.side_effect = slow_create
+
+        def _set_abort():
+            time.sleep(0.1)
+            abort.set()
+
+        threading.Thread(target=_set_abort, daemon=True).start()
+
+        with pytest.raises(_Aborted):
+            provider.chat_step([], "claude-sonnet-4-6", abort=abort)

@@ -217,17 +217,18 @@ class OllamaProvider:
         messages: list[dict],
         model: str,
         tools: list[dict] | None = None,
+        abort: threading.Event | None = None,
     ) -> tuple[str, list[dict]]:
         """Make exactly ONE model call and return ``(text, tool_calls)``.
 
         Does NOT execute tools and does NOT loop.  If the model rejects the
         tools payload, the call is retried without tools and an empty list is
-        returned for *tool_calls*.
+        returned for *tool_calls*.  Raises ``_Aborted`` if *abort* is set.
         """
         try:
-            return self._chat_step_raw(messages, model, tools)
+            return self._chat_step_raw(messages, model, tools, abort)
         except _ToolsNotSupported:
-            text, _ = self._chat_step_raw(messages, model, None)
+            text, _ = self._chat_step_raw(messages, model, None, abort)
             return text, []
 
     def _chat_step_raw(
@@ -235,6 +236,7 @@ class OllamaProvider:
         messages: list[dict],
         model: str,
         tools: list[dict] | None,
+        abort: threading.Event | None = None,
     ) -> tuple[str, list[dict]]:
         payload: dict = {
             "model": model,
@@ -244,7 +246,7 @@ class OllamaProvider:
         }
         if tools:
             payload["tools"] = tools
-        data = self._post(payload)
+        data = self._post(payload, abort=abort)
         msg = data.get("message", {})
         tool_calls = msg.get("tool_calls") or []
         return msg.get("content") or "", tool_calls
@@ -479,8 +481,12 @@ class AnthropicProvider:
         messages: list[dict],
         model: str,
         tools: list[dict] | None = None,
+        abort: threading.Event | None = None,
     ) -> tuple[str, list[dict]]:
-        """Single model call; returns ``(text, tool_calls)`` in OpenAI format."""
+        """Single model call; returns ``(text, tool_calls)`` in OpenAI format.
+
+        Raises ``_Aborted`` if *abort* is set while waiting.
+        """
         system, anth_msgs = _openai_messages_to_anthropic(messages)
         kwargs: dict = {
             "model": model,
@@ -492,8 +498,26 @@ class AnthropicProvider:
         if tools:
             kwargs["tools"] = _openai_tools_to_anthropic(tools)
 
-        response = self._client.messages.create(**kwargs)
+        _response: list = [None]
+        _exc: list[BaseException | None] = [None]
 
+        def _do_create() -> None:
+            try:
+                _response[0] = self._client.messages.create(**kwargs)
+            except BaseException as e:  # noqa: BLE001
+                _exc[0] = e
+
+        t = threading.Thread(target=_do_create, daemon=True)
+        t.start()
+        while t.is_alive():
+            t.join(timeout=0.3)
+            if abort is not None and abort.is_set():
+                raise _Aborted()
+
+        if _exc[0] is not None:
+            raise _exc[0]  # type: ignore[misc]
+
+        response = _response[0]
         text = ""
         tool_calls: list[dict] = []
         for block in response.content:
