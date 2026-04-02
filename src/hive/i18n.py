@@ -79,7 +79,7 @@ _STRINGS: dict[str, dict[str, str]] = {
         "startup.ollama_unreachable": "[yellow]Warning:[/yellow] Ollama is not reachable at {url}. AI responses will fail until Ollama is running.",
         "startup.gitscribe_no_key": "[yellow]Warning:[/yellow] 'gitscribe' MCP server is connected but ANTHROPIC_API_KEY is not set. Gitscribe tools will not work.",
         # exit hint
-        "exit.resume": "To resume:  hive --resume {id}",
+        "exit.resume": "To resume:\nhive --resume {id}",
     },
     "de": {
         # trust panel
@@ -150,7 +150,7 @@ _STRINGS: dict[str, dict[str, str]] = {
         "startup.ollama_unreachable": "[yellow]Warnung:[/yellow] Ollama ist nicht erreichbar unter {url}. KI-Antworten schlagen fehl, bis Ollama läuft.",
         "startup.gitscribe_no_key": "[yellow]Warnung:[/yellow] 'gitscribe' MCP-Server ist verbunden, aber ANTHROPIC_API_KEY ist nicht gesetzt. Gitscribe-Tools sind nicht verfügbar.",
         # exit hint
-        "exit.resume": "Fortsetzen mit:  hive --resume {id}",
+        "exit.resume": "Fortsetzen mit:\nhive --resume {id}",
     },
 }
 

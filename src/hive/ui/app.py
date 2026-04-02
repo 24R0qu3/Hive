@@ -353,7 +353,7 @@ class HiveApp:
 
         def get_input_height() -> int:
             try:
-                from prompt_toolkit import get_app
+                from prompt_toolkit.application import get_app
 
                 col = get_app().output.get_size().columns
             except Exception:
@@ -804,20 +804,45 @@ class HiveApp:
             text = self.input_field.text
             if "\n" in text or not text.startswith("/"):
                 return []
-            parts = text.split(" ", 1)
-            first = parts[0]
-            # Sub-command hints: "/cmd " or "/cmd sub_prefix"
-            if len(parts) == 2 and first in SUB_COMMANDS:
-                sub_prefix = parts[1]
+            tokens = text.split(" ", 2)
+            first = tokens[0]
+            # Third level: /agent edit|delete|copy <name_prefix>
+            if (
+                len(tokens) == 3
+                and first == "/agent"
+                and tokens[1] in ("edit", "delete", "copy")
+            ):
+                from hive.agent import load_agent_definitions
+
+                prefix = tokens[2]
+                names = sorted(load_agent_definitions(self._cwd).keys())
+                return [n for n in names if n.startswith(prefix) and n != prefix]
+            # /agent: sub-commands + runnable agent names
+            if len(tokens) == 2 and first == "/agent":
+                from hive.agent import load_agent_definitions
+
+                prefix = tokens[1]
+                sub_cmds = SUB_COMMANDS.get("/agent", [])
+                agent_names = sorted(load_agent_definitions(self._cwd).keys())
+                candidates = sub_cmds + [n for n in agent_names if n not in sub_cmds]
+                return [c for c in candidates if c.startswith(prefix) and c != prefix]
+            # /use: connected server names + all/none
+            if len(tokens) == 2 and first == "/use":
+                prefix = tokens[1]
+                candidates = sorted(self._mcp.servers().keys()) + ["all", "none"]
+                return [c for c in candidates if c.startswith(prefix) and c != prefix]
+            # Sub-command hints: "/cmd sub_prefix"
+            if len(tokens) == 2 and first in SUB_COMMANDS:
+                sub_prefix = tokens[1]
                 return [
                     s
                     for s in SUB_COMMANDS[first]
                     if s.startswith(sub_prefix) and s != sub_prefix
-                ][:5]
+                ]
             # Only show sub-command hints (not top-level) when command is exact and has subs
             if first in SUB_COMMANDS and text == first:
                 return []
-            return [c for c in _COMMANDS if c.startswith(text) and c != text][:5]
+            return [c for c in _COMMANDS if c.startswith(text) and c != text]
 
         def _inline_match() -> str | None:
             """First command matching the last space-separated slash-token, or None."""
@@ -850,12 +875,16 @@ class HiveApp:
             if matches:
                 idx = min(self._hint_idx, len(matches) - 1)
                 text = self.input_field.text
-                parts = text.split(" ", 1)
-                if len(parts) == 2 and parts[0] in SUB_COMMANDS:
-                    # Sub-command completion: "/cmd sub" → "/cmd add"
-                    new_text = parts[0] + " " + matches[idx]
+                tokens = text.split(" ", 2)
+                if (
+                    len(tokens) == 3
+                    and tokens[0] == "/agent"
+                    and tokens[1] in ("edit", "delete", "copy")
+                ):
+                    new_text = tokens[0] + " " + tokens[1] + " " + matches[idx]
+                elif len(tokens) == 2 and tokens[0] in SUB_COMMANDS:
+                    new_text = tokens[0] + " " + matches[idx]
                 else:
-                    # Top-level completion: "/res" → "/resume"
                     new_text = matches[idx]
             else:
                 # Inline slash-command — replace last word only
@@ -1014,13 +1043,25 @@ class HiveApp:
             if matches:
                 idx = min(self._hint_idx, len(matches) - 1)
                 text = self.input_field.text
-                input_parts = text.split(" ", 1)
-                is_sub = len(input_parts) == 2 and input_parts[0] in SUB_COMMANDS
-                cmd_prefix = (input_parts[0] + " ") if is_sub else ""
-                style_selected = "class:slash-sub" if is_sub else "class:slash-cmd"
-                for i, cmd in enumerate(matches):
+                input_tokens = text.split(" ", 2)
+                if (
+                    len(input_tokens) == 3
+                    and input_tokens[0] == "/agent"
+                    and input_tokens[1] in ("edit", "delete", "copy")
+                ):
+                    cmd_prefix = input_tokens[0] + " " + input_tokens[1] + " "
+                    style_selected = "class:slash-cmd"
+                elif len(input_tokens) == 2 and input_tokens[0] in SUB_COMMANDS:
+                    cmd_prefix = input_tokens[0] + " "
+                    style_selected = "class:slash-sub"
+                else:
+                    cmd_prefix = ""
+                    style_selected = "class:slash-cmd"
+                window_start = max(0, idx - 4)
+                visible = matches[window_start : window_start + 5]
+                for i, cmd in enumerate(visible):
                     label = cmd_prefix + cmd
-                    if i == idx:
+                    if window_start + i == idx:
                         parts += [(style_selected, f" ▶ {label}"), ("", "\n")]
                     else:
                         parts += [("class:hint", f"   {label}"), ("", "\n")]
@@ -1029,7 +1070,7 @@ class HiveApp:
             return parts
 
         def _hints_height() -> int:
-            return len(_hint_matches()) + 1  # +1: reserved row for transient hint
+            return min(len(_hint_matches()), 5) + 1  # +1: reserved row for transient hint
 
         hints_window = Window(
             content=FormattedTextControl(_hints_fragments),
@@ -1067,7 +1108,7 @@ class HiveApp:
 
     def _current_width(self) -> int:
         try:
-            from prompt_toolkit import get_app
+            from prompt_toolkit.application import get_app
 
             return get_app().output.get_size().columns
         except Exception:
@@ -1075,7 +1116,7 @@ class HiveApp:
 
     def _output_height(self) -> int:
         try:
-            from prompt_toolkit import get_app
+            from prompt_toolkit.application import get_app
 
             rows = get_app().output.get_size().rows
         except Exception:
@@ -1659,9 +1700,14 @@ class HiveApp:
             or ("notepad" if platform.system() == "Windows" else "nano")
         )
         try:
-            subprocess.Popen([editor, str(agent_path)])
+            from prompt_toolkit.application import run_in_terminal
+
+            def _run_editor():
+                subprocess.run([editor, str(agent_path)])
+
+            run_in_terminal(_run_editor)
             self.print(
-                f"[#FFC107]Opened '{name}' in {editor}.[/#FFC107] "
+                f"[#FFC107]Edited '{name}' in {editor}.[/#FFC107] "
                 "Restart Hive to apply changes."
             )
         except Exception as exc:
@@ -2000,4 +2046,4 @@ class HiveApp:
             self._mcp.shutdown()
             if self._session:
                 self._save_session_sync()
-                print("\n" + t("exit.resume", self._lang).format(id=self._session.id))
+                print(t("exit.resume", self._lang).format(id=self._session.id))
