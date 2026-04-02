@@ -74,6 +74,8 @@ from hive.workspace import (
 
 logger = logging.getLogger(__name__)
 
+_OUTPUT_PAD = 2  # left/right padding columns in the output window
+
 
 class _ScrollableWindow(Window):
     """Window subclass that routes scroll events to a caller-supplied handler.
@@ -1106,7 +1108,7 @@ class HiveApp:
         if width is None:
             width = self._current_width()
         console = Console(
-            file=buf, force_terminal=True, highlight=False, width=max(1, width - 1)
+            file=buf, force_terminal=True, highlight=False, width=max(1, width - 1 - 2 * _OUTPUT_PAD)
         )
         console.print(renderable)
         return buf.getvalue().splitlines()
@@ -1233,7 +1235,9 @@ class HiveApp:
             return []
         end = min(total, max(available, total - self._scroll_offset))
         start = max(0, end - available)
-        return list(to_formatted_text(ANSI("\n".join(all_lines[start:end]))))
+        pad = " " * _OUTPUT_PAD
+        padded = "\n".join(pad + line for line in all_lines[start:end])
+        return list(to_formatted_text(ANSI(padded)))
 
     def _split_conversation(self) -> "tuple[str | None, list[dict]]":
         """Return (summary_text_or_None, recent_pairs)."""
