@@ -1728,10 +1728,14 @@ class HiveApp:
                 return self._mcp.call_tool(name, args)
             return run_tool(name, args, cwd=self._cwd)
 
+        _tool_start: dict[tuple, float] = {}
+        _agent_start = time.monotonic()
+
         def _on_step(step: AgentStep) -> None:
             step_tag = f"[dim][{step.step_num}/{defn.max_steps}][/dim] "
             if step.tool_name and not step.tool_result:
-                # Tool call starting
+                # Tool call starting — record start time
+                _tool_start[(step.step_num, step.tool_name)] = time.monotonic()
                 args_preview = " ".join(str(v) for v in step.tool_args.values())[:60]
                 lines = self._render_to_lines(
                     f"  {step_tag}[dim]↳ {step.tool_name}[/dim]"
@@ -1740,10 +1744,14 @@ class HiveApp:
                 )
                 self._output_lines.extend(lines)
             elif step.tool_name and step.tool_result:
-                # Tool result
+                # Tool result — show elapsed time
+                elapsed = time.monotonic() - _tool_start.get(
+                    (step.step_num, step.tool_name), time.monotonic()
+                )
+                elapsed_str = f"{elapsed:.1f}s"
                 preview = step.tool_result[:250].replace("\n", " ")
                 lines = self._render_to_lines(
-                    f"  [dim]  → {preview}[/dim]", width=width
+                    f"  [dim]  → {preview}  [{elapsed_str}][/dim]", width=width
                 )
                 self._output_lines.extend(lines)
             elif step.text:
@@ -1781,9 +1789,13 @@ class HiveApp:
             result = runner.run(
                 defn, enriched_goal, _tool_executor, _on_step, all_tools, abort_event
             )
+            total = time.monotonic() - _agent_start
+            total_str = f"{total:.1f}s"
 
-            if not result.success and not abort_event.is_set():
-                self.print(f"[dim]Agent stopped: {result.summary}[/dim]")
+            if result.success:
+                self.print(f"[dim]Agent done in {total_str}[/dim]")
+            elif not abort_event.is_set():
+                self.print(f"[dim]Agent stopped: {result.summary}  [{total_str}][/dim]")
 
             self._conversation.append({"role": "assistant", "content": result.summary})
             self._full_conversation.append(
