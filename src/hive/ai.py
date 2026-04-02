@@ -70,10 +70,14 @@ class OllamaProvider:
     """
 
     def __init__(
-        self, base_url: str = DEFAULT_BASE_URL, num_ctx: int = DEFAULT_NUM_CTX
+        self,
+        base_url: str = DEFAULT_BASE_URL,
+        num_ctx: int = DEFAULT_NUM_CTX,
+        timeout: int = 300,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.num_ctx = num_ctx
+        self.timeout = timeout
 
     def chat(
         self,
@@ -174,7 +178,7 @@ class OllamaProvider:
 
         def _do() -> None:
             try:
-                with urllib.request.urlopen(req, timeout=120) as resp:
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                     _result[0] = json.loads(resp.read())
             except BaseException as e:  # noqa: BLE001
                 _exc[0] = e
