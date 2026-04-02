@@ -5,8 +5,12 @@ import threading
 import pytest
 
 import hive.workspace as ws_mod
-from hive.agent import AgentDefinition, AgentRunner, _extract_text_tool_calls
-from hive.agent import load_agent_definitions
+from hive.agent import (
+    AgentDefinition,
+    AgentRunner,
+    _extract_text_tool_calls,
+    load_agent_definitions,
+)
 from hive.workspace import create_workspace, save_agent_config, save_global_agent_config
 
 
@@ -130,7 +134,7 @@ def test_extract_text_tool_calls_parses_valid_json():
 def test_extract_text_tool_calls_multiple_calls():
     text = (
         '{"name": "shell", "arguments": {"command": "ls"}} '
-        'some text '
+        "some text "
         '{"name": "shell", "arguments": {"command": "pwd"}}'
     )
     calls = _extract_text_tool_calls(text)
@@ -192,7 +196,9 @@ def test_agent_runner_returns_success_on_stop_phrase():
     runner = AgentRunner(provider, "model")
     defn = _make_definition()
     steps = []
-    result = runner.run(defn, "do thing", lambda n, a: "", steps.append, [], threading.Event())
+    result = runner.run(
+        defn, "do thing", lambda n, a: "", steps.append, [], threading.Event()
+    )
     assert result.success is True
     assert "all done" in result.summary
 
@@ -200,9 +206,13 @@ def test_agent_runner_returns_success_on_stop_phrase():
 def test_agent_runner_returns_success_when_no_tool_calls():
     provider = _make_provider([("Nothing to do.", [])])
     runner = AgentRunner(provider, "model")
-    defn = _make_definition()
     result = runner.run(
-        _make_definition(), "do thing", lambda n, a: "", lambda s: None, [], threading.Event()
+        _make_definition(),
+        "do thing",
+        lambda n, a: "",
+        lambda s: None,
+        [],
+        threading.Event(),
     )
     assert result.success is True
 
@@ -229,9 +239,6 @@ def test_agent_runner_executes_tool_and_continues():
 
 def test_agent_runner_hits_max_steps():
     # Always returns a tool call — never completes
-    import itertools
-
-    counter = itertools.count()
     responses = [
         ("", [{"function": {"name": "shell", "arguments": {"command": "ls"}}}])
         for _ in range(5)
@@ -239,7 +246,9 @@ def test_agent_runner_hits_max_steps():
     provider = _make_provider(responses)
     defn = _make_definition(max_steps=5)
     result = runner = AgentRunner(provider, "model")
-    result = runner.run(defn, "go", lambda n, a: "ok", lambda s: None, [], threading.Event())
+    result = runner.run(
+        defn, "go", lambda n, a: "ok", lambda s: None, [], threading.Event()
+    )
     assert result.success is False
     assert result.steps_taken == 5
 
@@ -248,7 +257,12 @@ def test_agent_runner_returns_error_on_provider_exception():
     provider = _make_provider([RuntimeError("boom")])
     runner = AgentRunner(provider, "model")
     result = runner.run(
-        _make_definition(), "go", lambda n, a: "ok", lambda s: None, [], threading.Event()
+        _make_definition(),
+        "go",
+        lambda n, a: "ok",
+        lambda s: None,
+        [],
+        threading.Event(),
     )
     assert result.success is False
     assert "boom" in result.summary
@@ -304,7 +318,7 @@ def test_agent_runner_aborts_between_tool_calls():
 def test_agent_runner_text_mode_parses_tool_calls_from_text():
     tool_call_text = '{"name": "shell", "arguments": {"command": "pwd"}}'
     responses = [
-        (tool_call_text, []),   # model emits JSON text instead of structured call
+        (tool_call_text, []),  # model emits JSON text instead of structured call
         ("TASK_COMPLETE", []),
     ]
     provider = _make_provider(responses)
