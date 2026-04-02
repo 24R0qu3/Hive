@@ -2000,4 +2000,4 @@ class HiveApp:
             self._mcp.shutdown()
             if self._session:
                 self._save_session_sync()
-                print(t("exit.resume", self._lang).format(id=self._session.id))
+                print("\n" + t("exit.resume", self._lang).format(id=self._session.id))
