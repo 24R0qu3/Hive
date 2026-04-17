@@ -10,7 +10,7 @@ dependencies = [
     "prompt_toolkit",
     "rich",
     "platformdirs",
-    "mcp>=1.0",
+    "mcp>=1.27.0",
     "anthropic>=0.40",
 ]
 
